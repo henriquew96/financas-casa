@@ -114,7 +114,7 @@ function sanear(tipo, d) {
   }
   if (tipo === 'receita') return { id, pessoaId: pesOk(d.pessoaId), tipo: ['salario', 'vr', 'va', 'extra'].includes(d.tipo) ? d.tipo : 'extra', descricao: txt(d.descricao, 80), valor: numOk(d.valor), dia: intOk(d.dia, 1, 31), inicio: mesOk(d.inicio), fim: mesOk(d.fim) };
   if (tipo === 'fixa') return { id, descricao: txt(d.descricao, 80) || 'Conta', valor: numOk(d.valor), dia: intOk(d.dia, 1, 31), categoria: txt(d.categoria, 40) || 'Outros', pessoaId: pesOk(d.pessoaId, true), meio: ['conta', 'cartao', 'vr', 'va'].includes(d.meio) ? d.meio : 'conta', cartaoId: idOk(d.cartaoId), inicio: mesOk(d.inicio), fim: mesOk(d.fim) };
-  if (tipo === 'cartao') return { id, nome: txt(d.nome, 40) || 'Cartão', pessoaId: pesOk(d.pessoaId), final: /^\d{4}$/.test(d.final) ? d.final : '', fechamento: intOk(d.fechamento, 1, 31), vencimento: intOk(d.vencimento, 1, 31), limite: Math.max(0, numOk(d.limite)), teto: Math.max(0, numOk(d.teto)) };
+  if (tipo === 'cartao') return { id, nome: txt(d.nome, 40) || 'Cartão', pessoaId: pesOk(d.pessoaId), final: /^\d{4}$/.test(d.final) ? d.final : '', fechamento: intOk(d.fechamento, 1, 31), vencimento: intOk(d.vencimento, 1, 31), limite: Math.max(0, numOk(d.limite)), teto: Math.max(0, numOk(d.teto)), principalId: idOk(d.principalId) };
   return null;
 }
 function sanearEstado(o) {
@@ -159,6 +159,12 @@ let CARREGANDO = false;
 /* ---------- consultas ---------- */
 const pessoaNome = id => id === 'casal' ? 'Casal' : (S.pessoas.find(p => p.id === id)?.nome || '—');
 const cartaoPorId = id => S.cartoes.find(c => c.id === id) || null;
+// Cartões que dividem a mesma fatura e o mesmo limite (ex.: físico e online do mesmo banco):
+// o cartão "vinculado" aponta para o principal em principalId; datas, limite e meta valem os do principal.
+const principalDe = c => { const p = c && c.principalId ? cartaoPorId(c.principalId) : null; return p && p.id !== c.id && !p.principalId ? p : c; };
+const ehPrincipal = c => principalDe(c) === c;
+const idsGrupo = c => [c.id, ...S.cartoes.filter(x => x.id !== c.id && principalDe(x) === c).map(x => x.id)];
+const cartaoRegra = id => { const c = cartaoPorId(id); return c ? principalDe(c) : null; };
 const nomeCartao = id => { const c = cartaoPorId(id); return c ? c.nome : (id ? 'Cartão removido' : 'Cartão sem cadastro'); };
 const ROT_MEIO = { cartao:'Cartão', pix:'Pix', debito:'Débito', dinheiro:'Dinheiro', boleto:'Boleto/conta', conta:'Conta/boleto/Pix', vr:'VR', va:'VA' };
 const rotMeio = (meio, cid) => meio === 'cartao' ? nomeCartao(cid) : (ROT_MEIO[meio] || meio);
@@ -178,7 +184,7 @@ function mesFaturaDe(iso, c) {
 }
 function calcMesRef(l) {
   if (l.meio !== 'cartao') return l.data.slice(0, 7);
-  const c = cartaoPorId(l.cartaoId);
+  const c = cartaoRegra(l.cartaoId);
   return c ? mesFaturaDe(l.data, c) : somaMes(l.data.slice(0, 7), 1);
 }
 const ativo = (it, M) => (!it.inicio || it.inicio <= M) && (!it.fim || M <= it.fim);
@@ -192,19 +198,20 @@ function ocorrencia(l, M) {
 function resumoMes(M) {
   const R = { M, receitas: [], receitaTotal: 0, rendaPessoa: {}, vr: {credito:0, gasto:0}, va: {credito:0, gasto:0}, fixasContaTotal: 0, fixasCartaoTotal: 0, faturas: new Map(), lancCartaoTotal: 0, avistaTotal: 0, parcelasTotal: 0, cats: {}, pessoas: {} };
   const soma = (o, k, v) => { o[k] = (o[k] || 0) + v; };
-  const fatura = id => { if (!R.faturas.has(id)) R.faturas.set(id, { id, cartao: cartaoPorId(id), itens: 0, total: 0, parcelas: 0, avulsas: 0, porPessoa: {} }); return R.faturas.get(id); };
+  // a fatura é do cartão principal: compras do cartão vinculado (físico/online) caem na mesma fatura
+  const fatura = (id0, v) => { const c0 = cartaoPorId(id0), id = c0 ? principalDe(c0).id : id0; if (!R.faturas.has(id)) R.faturas.set(id, { id, cartao: cartaoPorId(id), itens: 0, total: 0, parcelas: 0, avulsas: 0, porPessoa: {}, porCartao: {} }); const ft = R.faturas.get(id); ft.porCartao[id0] = (ft.porCartao[id0] || 0) + v; return ft; };
   for (const r of S.receitas) if (ativo(r, M)) {
     if (ehVale(r.tipo)) R[r.tipo].credito += r.valor;
     else { R.receitas.push(r); R.receitaTotal += r.valor; soma(R.rendaPessoa, r.pessoaId, r.valor); }
   }
   for (const f of S.fixas) {
     if (f.meio === 'cartao') {
-      const c = cartaoPorId(f.cartaoId);
+      const c = cartaoRegra(f.cartaoId);
       for (const C of [somaMes(M, -2), somaMes(M, -1), M]) {
         if (!ativo(f, C)) continue;
         const mf = c ? mesFaturaDe(dataNoMes(C, f.dia), c) : somaMes(C, 1);
         if (mf !== M) continue;
-        const ft = fatura(f.cartaoId || ''); ft.itens++; ft.total += f.valor; soma(ft.porPessoa, f.pessoaId, f.valor);
+        const ft = fatura(f.cartaoId || '', f.valor); ft.itens++; ft.total += f.valor; soma(ft.porPessoa, f.pessoaId, f.valor);
         R.fixasCartaoTotal += f.valor; soma(R.cats, f.categoria, f.valor); soma(R.pessoas, f.pessoaId, f.valor);
       }
     } else if (ativo(f, M)) {
@@ -216,7 +223,7 @@ function resumoMes(M) {
     const p = ocorrencia(l, M); if (!p) continue;
     if (ehVale(l.meio)) { R[l.meio].gasto += l.valor; continue; }
     if (l.meio === 'cartao') {
-      const ft = fatura(l.cartaoId || ''); ft.itens++; ft.total += l.valor; R.lancCartaoTotal += l.valor;
+      const ft = fatura(l.cartaoId || '', l.valor); ft.itens++; ft.total += l.valor; R.lancCartaoTotal += l.valor;
       soma(ft.porPessoa, l.pessoaId, l.valor);
       if ((l.parcelas || 1) > 1) { R.parcelasTotal += l.valor; ft.parcelas += l.valor; }
       else ft.avulsas += l.valor;
@@ -238,22 +245,22 @@ const diasEntre = (a, b) => Math.round((Date.UTC(+b.slice(0, 4), +b.slice(5, 7) 
 function usoLimite(c) {
   const hoje = hojeISO(), aberta = mesFaturaDe(hoje, c), ant = somaMes(aberta, -1);
   const P = dataNoMes(ant, c.vencimento) >= hoje ? ant : aberta;   // primeira fatura ainda não paga
-  const porPessoa = {}; let usado = 0;
-  const add = (pid, v) => { usado += v; porPessoa[pid] = (porPessoa[pid] || 0) + v; };
+  const porPessoa = {}, porCartao = {}, ids = idsGrupo(c); let usado = 0;
+  const add = (pid, cid, v) => { usado += v; porPessoa[pid] = (porPessoa[pid] || 0) + v; porCartao[cid] = (porCartao[cid] || 0) + v; };
   for (const l of S.lancamentos) {
-    if (l.meio !== 'cartao' || (l.cartaoId || '') !== c.id || !l.mesRef) continue;
+    if (l.meio !== 'cartao' || !ids.includes(l.cartaoId || '') || !l.mesRef) continue;
     const n = (l.parcelas || 1) - (l.parcelaAtual || 1) + 1 - Math.max(0, difMeses(l.mesRef, P));
-    if (n > 0) add(l.pessoaId, l.valor * n);
+    if (n > 0) add(l.pessoaId, l.cartaoId, l.valor * n);
   }
   for (const f of S.fixas) {
-    if (f.meio !== 'cartao' || f.cartaoId !== c.id) continue;
+    if (f.meio !== 'cartao' || !ids.includes(f.cartaoId)) continue;
     for (let C = somaMes(P, -2); C <= hoje.slice(0, 7); C = somaMes(C, 1)) {
       const d = dataNoMes(C, f.dia);
-      if (ativo(f, C) && d <= hoje && mesFaturaDe(d, c) >= P) add(f.pessoaId, f.valor);
+      if (ativo(f, C) && d <= hoje && mesFaturaDe(d, c) >= P) add(f.pessoaId, f.cartaoId, f.valor);
     }
   }
   usado = round2(usado);
-  return { usado, porPessoa, aberta, primeira: P, disponivel: round2((c.limite || 0) - usado), pct: c.limite ? usado / c.limite * 100 : null };
+  return { usado, porPessoa, porCartao, aberta, primeira: P, disponivel: round2((c.limite || 0) - usado), pct: c.limite ? usado / c.limite * 100 : null };
 }
 // Ciclo da fatura aberta: do último fechamento até a véspera do próximo.
 function cicloAberto(c) {
@@ -417,7 +424,7 @@ function anel(segs, centro, total, aria) {
 const legItem = (cor, rot, v, pct, extra = '') => `<li${extra}><i class="ponto" style="background:var(${cor})"></i><span>${rot}</span><b>${brl(v)}</b>${pct != null ? `<small>${pct}%</small>` : ''}</li>`;
 // Gráfico da fatura aberta: gasto acumulado dia a dia, projeção até o fechamento e a meta.
 function graficoFatura(c, pv) {
-  const avs = S.lancamentos.filter(l => l.meio === 'cartao' && (l.cartaoId || '') === c.id && (l.parcelas || 1) === 1 && l.mesRef === pv.aberta);
+  const ids = idsGrupo(c), avs = S.lancamentos.filter(l => l.meio === 'cartao' && ids.includes(l.cartaoId || '') && (l.parcelas || 1) === 1 && l.mesRef === pv.aberta);
   const hojeI = pv.decorridos - 1, pts = [];
   for (let i = 0; i <= hojeI; i++) { const d = maisDias(pv.ini, i); pts.push({ d, v: round2(pv.certo + avs.reduce((s, l) => s + (l.data <= d ? l.valor : 0), 0)) }); }
   const W = 600, H = 150, max = Math.max(pv.previsto, c.teto || 0, pv.total, 1) * 1.12;
@@ -488,6 +495,7 @@ function blocoCartao(c, u) {
         <div class="num-g ${u.disponivel < 0 ? 'neg' : ''}">${brl(u.disponivel)}</div>
         <p class="sub">${brl(u.usado)} tomados de ${brl(c.limite)}</p>
         ${pes.length ? `<ul class="leg-lista compacta">${pes.map(([id, n, v]) => legItem(COR_PESSOA[id], esc(n), v, null)).join('')}</ul>` : ''}
+        ${idsGrupo(c).length > 1 ? `<p class="sub mini" style="margin-top:8px">Limite dividido entre ${idsGrupo(c).map(id => `${esc(nomeCartao(id))} <b>${brl(u.porCartao[id] || 0)}</b>`).join(' · ')}</p>` : ''}
       </div>
     </div>
   </section>`;
@@ -497,7 +505,7 @@ function blocoFatura(c, pv) {
   const base = pv.base === 'ritmo' ? `No ritmo de ${brl(pv.ritmo)} por dia nas compras à vista.` : pv.base === 'anterior' ? 'Ciclo no começo: previsão baseada na fatura anterior.' : 'Ciclo no começo: ainda sem ritmo para projetar.';
   const stat = (r, v, cls = '', sub = '') => `<div class="stat"><span>${r}</span><b class="${cls}">${v}</b>${sub ? `<small>${sub}</small>` : ''}</div>`;
   return `<section class="card bloco">
-    <div class="bloco-cab"><h3>Fatura de ${esc(mesSo(pv.aberta))}${S.cartoes.length > 1 ? ' · ' + esc(c.nome) : ''}</h3><span class="muted mini">fecha ${dataCurta(pv.fecha)} · ${pv.restantes} ${pv.restantes === 1 ? 'dia' : 'dias'}</span></div>
+    <div class="bloco-cab"><h3>Fatura de ${esc(mesSo(pv.aberta))}${S.cartoes.filter(ehPrincipal).length > 1 ? ' · ' + esc(c.nome) : ''}</h3><span class="muted mini">fecha ${dataCurta(pv.fecha)} · ${pv.restantes} ${pv.restantes === 1 ? 'dia' : 'dias'}</span></div>
     <div class="stats">
       ${stat('Até agora', brl(pv.total))}
       ${stat('Previsão', brl(pv.previsto), acima > 0 ? 'neg' : '', acima > 0 ? `${brl(acima)} acima da meta` : '')}
@@ -524,7 +532,7 @@ function alertasCartao(c, u, pv) {
 function vPainel() {
   if (!S.receitas.length && !S.fixas.length && !S.lancamentos.length && !S.cartoes.length) return vBoasVindas();
   const R = resumoMes(MES), comp = R.comprometido, rel = difMeses(mesAtual(), MES);
-  const cart = rel === 0 ? S.cartoes.map(c => ({ c, u: usoLimite(c), pv: previsaoFatura(c) })) : [];
+  const cart = rel === 0 ? S.cartoes.filter(ehPrincipal).map(c => ({ c, u: usoLimite(c), pv: previsaoFatura(c) })) : [];
   const alertas = cart.flatMap(x => alertasCartao(x.c, x.u, x.pv));
   if (R.livre < 0 && R.receitaTotal) alertas.push(['cr', `<b>Os gastos de ${esc(mesSo(MES))} passam da renda</b> em ${brl(-R.livre)}.`]);
   const falta = [];
@@ -575,7 +583,7 @@ function vPainel() {
   if (fats.length) h += dobra(`Faturas que vencem em ${esc(mesSo(MES))}`, brl(R.fixasCartaoTotal + R.lancCartaoTotal), `<div class="lista">${fats.map(ft => {
     const c = ft.cartao;
     return `<button class="linha" data-acao="ver-cartao" data-id="${esc(ft.id)}"><span class="l-ico emoji">💳</span>
-      <span class="l-desc"><b>${esc(nomeCartao(ft.id))}</b><small>${c ? `vence ${pad(Math.min(c.vencimento, diasNoMes(MES)))}/${MES.slice(5)} · ` : ''}${ft.itens} ${ft.itens === 1 ? 'item' : 'itens'}${ft.parcelas ? ` · parcelas ${brl(ft.parcelas)}` : ''}</small></span>
+      <span class="l-desc"><b>${esc(nomeCartao(ft.id))}${Object.keys(ft.porCartao).length > 1 ? ' <span class="muted">+ ' + Object.keys(ft.porCartao).filter(id => id !== ft.id).map(id => esc(nomeCartao(id))).join(', ') + '</span>' : ''}</b><small>${c ? `vence ${pad(Math.min(c.vencimento, diasNoMes(MES)))}/${MES.slice(5)} · ` : ''}${ft.itens} ${ft.itens === 1 ? 'item' : 'itens'}${ft.parcelas ? ` · parcelas ${brl(ft.parcelas)}` : ''}</small></span>
       <span class="l-valor">${brl(ft.total)}</span></button>`;
   }).join('')}</div>
   ${fats.filter(ft => ft.total).map(ft => `<p class="sub" style="margin-top:10px">Parte de cada um${fats.length > 1 ? ' · ' + esc(nomeCartao(ft.id)) : ''}: ${partes(ft.porPessoa).map(([n, v]) => `${esc(n)} <b>${brl(v)}</b>`).join(' · ')}${ft.porPessoa.casal ? ` <span class="muted">(inclui ${brl(ft.porPessoa.casal)} do casal, dividido ao meio)</span>` : ''}</p>`).join('')}`);
@@ -608,7 +616,7 @@ function vPainel() {
 
 /* ---------- Lançamentos ---------- */
 function vLancamentos() {
-  const meios = [['', 'Todos os meios'], ['cartao', 'Todos os cartões'], ...S.cartoes.map(c => ['cartao:' + c.id, 'Cartão ' + c.nome]), ['pix', 'Pix'], ['debito', 'Débito'], ['dinheiro', 'Dinheiro'], ['boleto', 'Boleto/conta'], ['vr', 'VR'], ['va', 'VA']];
+  const meios = [['', 'Todos os meios'], ['cartao', 'Todos os cartões'], ...S.cartoes.filter(c => ehPrincipal(c) && idsGrupo(c).length > 1).map(c => ['grupo:' + c.id, `Fatura ${c.nome} (${idsGrupo(c).length} cartões)`]), ...S.cartoes.map(c => ['cartao:' + c.id, 'Cartão ' + c.nome]), ['pix', 'Pix'], ['debito', 'Débito'], ['dinheiro', 'Dinheiro'], ['boleto', 'Boleto/conta'], ['vr', 'VR'], ['va', 'VA']];
   if (FILTRO.meio && !meios.some(m => m[0] === FILTRO.meio)) meios.push([FILTRO.meio, nomeCartao(FILTRO.meio.slice(7))]);
   const op = (lista, sel) => lista.map(([v, t]) => `<option value="${esc(v)}" ${v === sel ? 'selected' : ''}>${esc(t)}</option>`).join('');
   return `<section class="card">
@@ -640,6 +648,7 @@ function renderListaLanc() {
     if (FILTRO.pessoa && l.pessoaId !== FILTRO.pessoa) continue;
     if (FILTRO.meio) {
       if (FILTRO.meio === 'cartao') { if (l.meio !== 'cartao') continue; }
+      else if (FILTRO.meio.startsWith('grupo:')) { const p = cartaoPorId(FILTRO.meio.slice(6)); if (l.meio !== 'cartao' || !p || !idsGrupo(p).includes(l.cartaoId || '')) continue; }
       else if (FILTRO.meio.startsWith('cartao:')) { if (l.meio !== 'cartao' || (l.cartaoId || '') !== FILTRO.meio.slice(7)) continue; }
       else if (l.meio !== FILTRO.meio) continue;
     }
@@ -694,8 +703,8 @@ function vCadastros() {
   h += `<section class="card"><h3>Cartões de crédito<button class="btn peq" data-acao="novo-cartao">+ Cartão</button></h3>`;
   h += S.cartoes.length ? `<div class="lista">${S.cartoes.map(c => `<button class="linha" data-acao="editar-cartao" data-id="${esc(c.id)}">
       <span class="l-ico">${esc(c.nome.slice(0, 2).toUpperCase())}</span>
-      <span class="l-desc"><b>${esc(c.nome)}${c.final ? ` <span class="muted">•• ${esc(c.final)}</span>` : ''}</b><small>${esc(pessoaNome(c.pessoaId))} · fecha dia ${esc(c.fechamento)} · vence dia ${esc(c.vencimento)}</small></span>
-      <span class="l-valor">${c.limite ? brl(c.limite) + '<small>limite</small>' : ''}</span></button>`).join('')}</div>`
+      <span class="l-desc"><b>${esc(c.nome)}${c.final ? ` <span class="muted">•• ${esc(c.final)}</span>` : ''}</b><small>${esc(pessoaNome(c.pessoaId))} · ${ehPrincipal(c) ? `fecha dia ${esc(c.fechamento)} · vence dia ${esc(c.vencimento)}${idsGrupo(c).length > 1 ? ' · divide limite e fatura com ' + idsGrupo(c).slice(1).map(id => esc(nomeCartao(id))).join(', ') : ''}` : `mesma fatura e mesmo limite do ${esc(principalDe(c).nome)}`}</small></span>
+      <span class="l-valor">${ehPrincipal(c) ? (c.limite ? brl(c.limite) + '<small>limite</small>' : '') : '<small>limite compartilhado</small>'}</span></button>`).join('')}</div>`
     : `<p class="sub">Com o dia de fechamento e de vencimento, cada compra vai para a fatura certa — e as parcelas se espalham pelos meses seguintes.</p>`;
   h += `</section>`;
 
@@ -888,34 +897,45 @@ function formReceita(r) {
   });
 }
 function formCartao(c) {
-  const b = c || { nome: '', pessoaId: EU(), final: '', fechamento: '', vencimento: '', limite: '' };
+  const b = c || { nome: '', pessoaId: EU(), final: '', fechamento: '', vencimento: '', limite: '', principalId: '' };
+  // só dá para se vincular a um cartão principal; um cartão que já tem vinculados não pode virar vinculado
+  const temVinculados = !!c && idsGrupo(c).length > 1;
+  const principais = temVinculados ? [] : S.cartoes.filter(x => (!c || x.id !== c.id) && !x.principalId);
+  const vinc = v => !!v.principalId;
   abrirForm({
     titulo: c ? 'Editar cartão' : 'Novo cartão de crédito',
     info: 'O dia do fechamento é o “melhor dia de compra”: o que é comprado desse dia em diante já vai para a fatura seguinte.',
     campos: [
-      { nome: 'nome', label: 'Nome do cartão', tipo: 'text', valor: b.nome, placeholder: 'Ex.: Nubank, Itaú Click', largo: true },
+      { nome: 'nome', label: 'Nome do cartão', tipo: 'text', valor: b.nome, placeholder: 'Ex.: Santander físico, Santander online', largo: true },
+      ...(principais.length ? [{ nome: 'principalId', label: 'Divide a fatura e o limite com outro cartão?', tipo: 'select', opcoes: [['', 'Não — tem fatura e limite próprios'], ...principais.map(x => [x.id, `Sim — com o ${x.nome}`])], valor: c && !ehPrincipal(c) ? c.principalId : '', dica: true, largo: true }] : []),
       { nome: 'pessoaId', label: 'Titular', tipo: 'select', opcoes: S.pessoas.map(p => [p.id, p.nome]), valor: b.pessoaId },
       { nome: 'final', label: 'Últimos 4 dígitos (opcional)', tipo: 'text', valor: b.final, placeholder: '0000', inputmode: 'numeric', maxlength: 4 },
-      { nome: 'fechamento', label: 'Dia do fechamento', tipo: 'number', min: 1, max: 31, valor: b.fechamento },
-      { nome: 'vencimento', label: 'Dia do vencimento', tipo: 'number', min: 1, max: 31, valor: b.vencimento, dica: true },
-      { nome: 'limite', label: 'Limite do cartão', tipo: 'dinheiro', valor: b.limite || '' },
-      { nome: 'teto', label: 'Meta por fatura (opcional)', tipo: 'dinheiro', valor: b.teto || '', dica: true },
+      { nome: 'fechamento', label: 'Dia do fechamento', tipo: 'number', min: 1, max: 31, valor: b.fechamento, mostrarSe: v => !vinc(v) },
+      { nome: 'vencimento', label: 'Dia do vencimento', tipo: 'number', min: 1, max: 31, valor: b.vencimento, dica: true, mostrarSe: v => !vinc(v) },
+      { nome: 'limite', label: 'Limite do cartão', tipo: 'dinheiro', valor: b.limite || '', mostrarSe: v => !vinc(v) },
+      { nome: 'teto', label: 'Meta por fatura (opcional)', tipo: 'dinheiro', valor: b.teto || '', dica: true, mostrarSe: v => !vinc(v) },
     ],
     aoMudar: (v, form) => {
       const f = +v.fechamento, ve = +v.vencimento;
       form.querySelector('[data-dica="vencimento"]').textContent = f >= 1 && f <= 31 && ve >= 1 && ve <= 31 ? `Uma compra feita hoje cai na fatura de ${mesSo(mesFaturaDe(hojeISO(), { fechamento: f, vencimento: ve }))}.` : '';
+      const dp = form.querySelector('[data-dica="principalId"]');
+      if (dp) dp.textContent = vinc(v) ? 'Os dois cartões somam na mesma fatura e consomem o mesmo limite. Fechamento, vencimento, limite e meta valem os do cartão principal.' : 'Use para o cartão físico e o online (virtual) do mesmo banco.';
       form.querySelector('[data-dica="teto"]').textContent = 'Quanto vocês querem gastar no máximo por fatura. O painel avisa quando a previsão passar disso.';
     },
-    validar: v => !v.nome.trim() ? 'Dê um nome ao cartão.' : !(+v.fechamento >= 1 && +v.fechamento <= 31) ? 'Informe o dia do fechamento (1 a 31).' : !(+v.vencimento >= 1 && +v.vencimento <= 31) ? 'Informe o dia do vencimento (1 a 31).' : (v.final && !/^\d{4}$/.test(v.final.trim())) ? 'Os últimos dígitos são 4 números.' : null,
+    validar: v => !v.nome.trim() ? 'Dê um nome ao cartão.' : vinc(v) ? ((v.final && !/^\d{4}$/.test(v.final.trim())) ? 'Os últimos dígitos são 4 números.' : null) : !(+v.fechamento >= 1 && +v.fechamento <= 31) ? 'Informe o dia do fechamento (1 a 31).' : !(+v.vencimento >= 1 && +v.vencimento <= 31) ? 'Informe o dia do vencimento (1 a 31).' : (v.final && !/^\d{4}$/.test(v.final.trim())) ? 'Os últimos dígitos são 4 números.' : null,
     aoSalvar: v => {
       const o = c || { id: uid() };
       const lim = parseValor(v.limite), teto = parseValor(v.teto);
-      Object.assign(o, { nome: v.nome.trim(), pessoaId: v.pessoaId, final: v.final.trim(), fechamento: +v.fechamento, vencimento: +v.vencimento, limite: lim > 0 ? round2(lim) : 0, teto: teto > 0 ? round2(teto) : 0 });
+      const pr = vinc(v) ? cartaoPorId(v.principalId) : null;
+      if (pr) Object.assign(o, { nome: v.nome.trim(), pessoaId: v.pessoaId, final: v.final.trim(), fechamento: pr.fechamento, vencimento: pr.vencimento, limite: 0, teto: 0, principalId: pr.id });
+      else Object.assign(o, { nome: v.nome.trim(), pessoaId: v.pessoaId, final: v.final.trim(), fechamento: +v.fechamento, vencimento: +v.vencimento, limite: lim > 0 ? round2(lim) : 0, teto: teto > 0 ? round2(teto) : 0, principalId: '' });
       if (!c) S.cartoes.push(o);
-      for (const l of S.lancamentos) if (l.meio === 'cartao' && l.cartaoId === o.id && l.mesRefAuto) l.mesRef = calcMesRef(l);
+      const grupo = idsGrupo(principalDe(o));
+      for (const x of S.cartoes) if (x.id !== o.id && x.principalId === o.id) { x.fechamento = o.fechamento; x.vencimento = o.vencimento; }
+      for (const l of S.lancamentos) if (l.meio === 'cartao' && grupo.includes(l.cartaoId) && l.mesRefAuto) l.mesRef = calcMesRef(l);
       toast('Cartão salvo');
     },
-    aoExcluir: c ? () => { S.cartoes = S.cartoes.filter(x => x.id !== c.id); } : null,
+    aoExcluir: c ? () => { S.cartoes = S.cartoes.filter(x => x.id !== c.id); for (const x of S.cartoes) if (x.principalId === c.id) x.principalId = ''; } : null,
     confirmaExcluir: 'Excluir este cartão? Os lançamentos dele continuam, marcados como “cartão removido”.',
   });
 }
@@ -1902,7 +1922,7 @@ const ACOES = {
   'editar-cartao': t => { const c = S.cartoes.find(x => x.id === t.dataset.id); if (c) formCartao(c); },
   'nova-fixa': () => formFixa(),
   'editar-fixa': t => { const f = S.fixas.find(x => x.id === t.dataset.id); if (f) formFixa(f); },
-  'ver-cartao': t => { FILTRO = { q: '', pessoa: '', cat: '', meio: 'cartao:' + t.dataset.id, visao: 'pagamento' }; ABA = 'lancamentos'; render(); window.scrollTo(0, 0); },
+  'ver-cartao': t => { FILTRO = { q: '', pessoa: '', cat: '', meio: (cartaoPorId(t.dataset.id) && idsGrupo(cartaoPorId(t.dataset.id)).length > 1 ? 'grupo:' : 'cartao:') + t.dataset.id, visao: 'pagamento' }; ABA = 'lancamentos'; render(); window.scrollTo(0, 0); },
   'ver-cat': t => { FILTRO = { q: '', pessoa: '', meio: '', cat: t.dataset.v, visao: 'pagamento' }; ABA = 'lancamentos'; render(); window.scrollTo(0, 0); },
   'ir-importar': () => { ABA = 'importar'; render(); window.scrollTo(0, 0); },
   visao: t => { FILTRO.visao = t.dataset.v; render(); },
