@@ -398,132 +398,211 @@ function graficoProjecao() {
       <div class="proj-sobra ${r.livre < 0 ? 'neg' : ''}">${r.livre < 0 ? '⚠ −' : ''}<span class="rs">R$ </span>${Math.abs(r.livre) < 1000 ? Math.round(Math.abs(r.livre)) : fmtNumC.format(Math.abs(r.livre))}</div></div>`;
   }).join('')}</div>`;
 }
-// Painel do cartão (só no mês corrente): quanto do limite está tomado e como a fatura aberta deve fechar.
-function secaoLimite() {
-  const alertas = [], linha = (r, v, cls = '') => `<span class="${cls}">${r}<b>${v}</b></span>`;
-  const cards = S.cartoes.map(c => {
-    const u = usoLimite(c), pv = previsaoFatura(c), nome = esc(c.nome), mesF = esc(mesSo(pv.aberta)), fecha = dataCurta(pv.fecha);
-    const usadoPrev = round2(u.usado + (pv.previsto - pv.total));
-    const pes = [...S.pessoas.map(p => [p.nome, u.porPessoa[p.id] || 0]), ['Casal', u.porPessoa.casal || 0]].filter(x => x[1]);
-    let h = '';
-    if (c.limite) {
-      const pct = u.pct, pctPrev = usadoPrev / c.limite * 100, niv = nivelUso(pct);
-      if (pct >= 100) alertas.push(`⚠ <b>${nome}: limite estourado.</b> ${brl(u.usado)} tomados de ${brl(c.limite)}.`);
-      else if (pct >= 90) alertas.push(`⚠ <b>${nome}: ${Math.round(pct)}% do limite usado.</b> Restam só ${brl(u.disponivel)}.`);
-      else if (pctPrev >= 100) alertas.push(`⚠ <b>${nome}: no ritmo atual o limite acaba antes do fechamento</b> (${fecha}). Hoje restam ${brl(u.disponivel)}.`);
-      else if (pct >= 70) alertas.push(`<b>${nome}: ${Math.round(pct)}% do limite usado.</b> Restam ${brl(u.disponivel)}.`);
-      h += `<div class="card kpi"><div class="rot">Limite do ${nome}</div><div class="val ${u.disponivel < 0 ? 'neg' : ''}">${brl(u.disponivel)} <small>livres</small></div>
-        <div class="medidor ${niv}" role="img" aria-label="${Math.round(pct)}% do limite usado"><span style="width:${Math.min(100, pct).toFixed(1)}%"></span></div>
-        <div class="det">${linha('Tomado hoje', `${brl(u.usado)} · ${Math.round(pct)}%`)}${linha('Limite', brl(c.limite))}${linha(`Previsto no fechamento (${fecha})`, `${brl(usadoPrev)} · ${Math.round(pctPrev)}%`, pctPrev >= 90 ? 'neg' : '')}${pes.map(([n, v]) => linha('…de ' + esc(n), brl(v))).join('')}</div>
-        <p class="sub mini">Conta a fatura que ainda não venceu, a fatura aberta e todas as parcelas futuras.</p></div>`;
-    } else {
-      h += `<div class="card kpi"><div class="rot">Limite do ${nome}</div><div class="val">${brl(u.usado)} <small>tomados</small></div>
-        <div class="det">${pes.map(([n, v]) => linha('…de ' + esc(n), brl(v))).join('')}</div>
-        <p class="sub mini"><button class="link" data-acao="editar-cartao" data-id="${esc(c.id)}">Informe o limite do cartão</button> para ver quanto ainda está livre e receber o aviso quando estiver perto.</p></div>`;
-    }
-    const folga = c.teto ? c.teto - pv.total : 0, acima = c.teto ? pv.previsto - c.teto : 0;
-    if (c.teto && pv.total > c.teto) alertas.push(`⚠ <b>Fatura de ${mesF} do ${nome} já passou da meta</b> em ${brl(pv.total - c.teto)}.`);
-    else if (c.teto && acima > 0) alertas.push(`⚠ <b>Fatura de ${mesF} do ${nome} deve fechar ${brl(acima)} acima da meta</b> (previsão ${brl(pv.previsto)}, meta ${brl(c.teto)}).`);
-    const pctT = c.teto ? pv.previsto / c.teto * 100 : 0;
-    const base = pv.base === 'ritmo' ? `Ritmo de ${brl(pv.ritmo)} por dia nas compras à vista, mantido até o fechamento.` : pv.base === 'anterior' ? 'O ciclo acabou de começar: a previsão usa as compras à vista da fatura anterior.' : 'O ciclo acabou de começar: ainda não há ritmo para projetar.';
-    h += `<div class="card kpi"><div class="rot">Fatura de ${mesF} · fecha ${fecha}</div><div class="val ${acima > 0 ? 'neg' : ''}">${brl(pv.previsto)} <small>previsão</small></div>
-      ${c.teto ? `<div class="medidor ${pctT > 100 ? 'estouro' : pctT >= 85 ? 'atencao' : ''}" role="img" aria-label="${Math.round(pctT)}% da meta"><span style="width:${Math.min(100, pctT).toFixed(1)}%"></span></div>` : ''}
-      <div class="det">${linha('Já está na fatura', brl(pv.total))}${linha('…parcelas e fixas do ciclo', brl(pv.certo))}${linha('…compras à vista até hoje', brl(pv.avulsas))}${linha('Dias até fechar (com hoje)', pv.restantes)}${c.teto ? linha('Meta da fatura', brl(c.teto)) + linha('Dá para gastar por dia', brl(Math.max(0, folga) / pv.restantes), folga <= 0 ? 'neg' : '') : ''}</div>
-      <p class="sub mini">${base}${c.teto ? '' : ` <button class="link" data-acao="editar-cartao" data-id="${esc(c.id)}">Definir uma meta por fatura</button>.`}</p></div>`;
-    return h;
-  });
-  return { alertas, html: `<div class="grid kpis">${cards.join('')}</div>` };
+/* ---------- tela inicial: peças visuais ---------- */
+const CAT_ICO = { 'Moradia': '🏠', 'Contas da casa': '💡', 'Mercado': '🛒', 'Alimentação fora': '🍔', 'Transporte': '🚗', 'Saúde': '💊', 'Educação': '🎓', 'Lazer': '🎬', 'Viagem': '✈️', 'Assinaturas': '📺', 'Compras': '🛍️', 'Vestuário': '👕', 'Beleza e cuidados': '💅', 'Pets': '🐾', 'Presentes': '🎁', 'Taxas e juros': '💸', 'Reserva e investimentos': '🏦' };
+const catIco = c => CAT_ICO[c] || '🧾';
+const COR_PESSOA = { p1: '--c1', p2: '--c5', casal: '--c3' };
+const maisDias = (iso, n) => new Date(Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8)) + n * 864e5).toISOString().slice(0, 10);
+// Anel: cada fatia é um arco; `total` maior que a soma deixa o resto como trilho (medidor).
+function anel(segs, centro, total, aria) {
+  const vis = segs.filter(x => x.v > 0), soma = vis.reduce((s, x) => s + x.v, 0), tot = Math.max(total || 0, soma);
+  let acc = 0;
+  const arcos = tot > 0 ? vis.map(x => {
+    const p = x.v / tot * 100, len = Math.max(0.8, p - (vis.length > 1 || tot > soma ? 0.9 : 0));
+    const h = `<circle class="seg" cx="50" cy="50" r="42" pathLength="100" stroke="var(${x.cor})" stroke-dasharray="${len.toFixed(2)} ${(100 - len).toFixed(2)}" stroke-dashoffset="${(-acc).toFixed(2)}" data-tip="${esc(x.tip)}"${x.acao ? ` data-acao="${x.acao}" data-v="${esc(x.val || '')}"` : ''}></circle>`;
+    acc += p; return h;
+  }).join('') : '';
+  return `<div class="anel"><svg viewBox="0 0 100 100" role="img" aria-label="${esc(aria || '')}"><circle class="trilho" cx="50" cy="50" r="42"></circle>${arcos}</svg><div class="anel-centro">${centro}</div></div>`;
 }
+const legItem = (cor, rot, v, pct, extra = '') => `<li${extra}><i class="ponto" style="background:var(${cor})"></i><span>${rot}</span><b>${brl(v)}</b>${pct != null ? `<small>${pct}%</small>` : ''}</li>`;
+// Gráfico da fatura aberta: gasto acumulado dia a dia, projeção até o fechamento e a meta.
+function graficoFatura(c, pv) {
+  const avs = S.lancamentos.filter(l => l.meio === 'cartao' && (l.cartaoId || '') === c.id && (l.parcelas || 1) === 1 && l.mesRef === pv.aberta);
+  const hojeI = pv.decorridos - 1, pts = [];
+  for (let i = 0; i <= hojeI; i++) { const d = maisDias(pv.ini, i); pts.push({ d, v: round2(pv.certo + avs.reduce((s, l) => s + (l.data <= d ? l.valor : 0), 0)) }); }
+  const W = 600, H = 150, max = Math.max(pv.previsto, c.teto || 0, pv.total, 1) * 1.12;
+  const X = i => i / pv.dias * W, Y = v => H - Math.max(0, v) / max * H;
+  const linha = pts.map((p, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)},${Y(p.v).toFixed(1)}`).join('');
+  const area = `${linha}L${X(hojeI).toFixed(1)},${H}L0,${H}Z`;
+  const ult = pts[hojeI].v;
+  const faixas = pts.map((p, i) => `<rect class="hit" x="${(X(i) - W / pv.dias / 2).toFixed(1)}" y="0" width="${(W / pv.dias).toFixed(1)}" height="${H}" data-tip="${esc(`${diaSemana(p.d)}, ${dataCurta(p.d)}\nNa fatura: ${brl(p.v)}`)}"></rect>`).join('')
+    + (hojeI < pv.dias ? `<rect class="hit" x="${(X(hojeI) + W / pv.dias / 2).toFixed(1)}" y="0" width="${(W - X(hojeI) - W / pv.dias / 2).toFixed(1)}" height="${H}" data-tip="${esc(`Fechamento em ${dataCurta(pv.fecha)}\nPrevisão: ${brl(pv.previsto)}`)}"></rect>` : '');
+  const pos = (i, v) => `left:${(X(i) / W * 100).toFixed(2)}%;top:${(Y(v) / H * 100).toFixed(2)}%`;
+  const acima = c.teto && pv.previsto > c.teto;
+  return `<div class="graf">
+    <div class="graf-area">
+      <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Fatura: ${brl(ult)} até hoje, previsão de ${brl(pv.previsto)} no fechamento${c.teto ? `, meta de ${brl(c.teto)}` : ''}">
+        <line class="g-base" x1="0" y1="${H}" x2="${W}" y2="${H}"></line>
+        ${c.teto ? `<line class="g-meta" x1="0" y1="${Y(c.teto).toFixed(1)}" x2="${W}" y2="${Y(c.teto).toFixed(1)}"></line>` : ''}
+        <path class="g-area" d="${area}"></path>
+        <path class="g-linha" d="${linha}"></path>
+        ${hojeI < pv.dias ? `<path class="g-proj ${acima ? 'acima' : ''}" d="M${X(hojeI).toFixed(1)},${Y(ult).toFixed(1)}L${W},${Y(pv.previsto).toFixed(1)}"></path>` : ''}
+        ${faixas}
+      </svg>
+      ${c.teto ? `<span class="g-rot meta" style="top:${(Y(c.teto) / H * 100).toFixed(2)}%">meta ${brlC(c.teto)}</span>` : ''}
+      <i class="g-pt" style="${pos(hojeI, ult)}"></i>
+      ${hojeI < pv.dias ? `<i class="g-pt prev ${acima ? 'acima' : ''}" style="${pos(pv.dias, pv.previsto)}"></i>` : ''}
+    </div>
+    <div class="graf-eixo"><span>${dataCurta(pv.ini)}</span><span style="left:${(X(hojeI) / W * 100).toFixed(2)}%" class="hoje">hoje</span><span class="fim">fecha ${dataCurta(pv.fecha)}</span></div>
+    <div class="leg" style="margin-top:8px"><span><i class="g-leg"></i>Gasto acumulado</span><span><i class="g-leg proj"></i>Previsão no ritmo atual</span>${c.teto ? '<span><i class="g-leg meta"></i>Meta da fatura</span>' : ''}</div>
+  </div>`;
+}
+const dobra = (titulo, resumo, corpo, aberto) => `<details class="card dobra"${aberto ? ' open' : ''}><summary><span>${titulo}</span><span class="muted">${resumo || ''}</span></summary><div class="dobra-corpo">${corpo}</div></details>`;
+
+function blocoSobra(R, rel) {
+  const renda = R.receitaTotal, comp = R.comprometido, livre = R.livre, pc = v => renda > 0 ? Math.round(v / renda * 100) : null;
+  const segs = [
+    { v: R.fixasTotal, cor: '--s-fixas', tip: `Contas fixas\n${brl(R.fixasTotal)}` },
+    { v: R.variaveisTotal, cor: '--s-var', tip: `Variáveis\n${brl(R.variaveisTotal)}` },
+    { v: Math.max(0, livre), cor: '--s-livre', tip: `Sobra\n${brl(livre)}` },
+  ];
+  const centro = `<small>${livre < 0 ? 'faltam' : 'sobram'}</small><b class="${livre < 0 ? 'neg' : ''}">${brlC(Math.abs(livre))}</b><small>${renda ? `de ${brlC(renda)}` : 'sem renda'}</small>`;
+  return `<section class="card bloco">
+    <div class="bloco-cab"><h3>Sobra de ${esc(mesSo(MES))}</h3>${rel === 0 ? `<button class="link mini" data-acao="mes" data-d="1">mês que vem →</button>` : `<button class="link mini" data-acao="mes-hoje">voltar para hoje</button>`}</div>
+    <div class="bloco-corpo">
+      ${anel(segs, centro, 0, `Fixas ${brl(R.fixasTotal)}, variáveis ${brl(R.variaveisTotal)}, sobra ${brl(livre)}`)}
+      <ul class="leg-lista">
+        ${legItem('--s-fixas', 'Contas fixas', R.fixasTotal, pc(R.fixasTotal))}
+        ${legItem('--s-var', 'Variáveis', R.variaveisTotal, pc(R.variaveisTotal))}
+        ${legItem('--s-livre', 'Sobra', Math.max(0, livre), pc(Math.max(0, livre)))}
+      </ul>
+    </div>
+    ${livre < 0 && renda ? `<p class="sub neg" style="margin-top:10px">⚠ Os gastos passam da renda do mês em ${brl(-livre)}.</p>` : !renda ? `<p class="sub" style="margin-top:10px"><button class="link" data-acao="nova-receita">Cadastre a renda</button> para ver quanto sobra.</p>` : ''}
+  </section>`;
+}
+function blocoCartao(c, u) {
+  const pes = [...S.pessoas.map(p => [p.id, p.nome]), ['casal', 'Casal']].map(([id, n]) => [id, n, u.porPessoa[id] || 0]).filter(x => x[2] > 0);
+  if (!c.limite) return `<section class="card bloco"><div class="bloco-cab"><h3>Cartão ${esc(c.nome)}</h3></div>
+    <div class="num-g">${brl(u.usado)}</div><p class="sub">em aberto no cartão (faturas não pagas e parcelas futuras).</p>
+    <p class="sub" style="margin-top:10px"><button class="link" data-acao="editar-cartao" data-id="${esc(c.id)}">Informe o limite</button> para ver quanto ainda está livre.</p></section>`;
+  const pct = u.pct, niv = pct >= 90 ? 'cr' : pct >= 70 ? 'at' : 'ok';
+  const st = { ok: ['✓', 'Tranquilo'], at: ['!', 'Atenção'], cr: ['⚠', pct >= 100 ? 'Estourado' : 'Perto do limite'] }[niv];
+  const cor = { ok: '--c1', at: '--atencao', cr: '--critico' }[niv];
+  const centro = `<b>${Math.round(pct)}%</b><small>do limite</small>`;
+  return `<section class="card bloco">
+    <div class="bloco-cab"><h3>Cartão ${esc(c.nome)}</h3><span class="st ${niv}"><i>${st[0]}</i>${st[1]}</span></div>
+    <div class="bloco-corpo">
+      ${anel([{ v: Math.min(u.usado, c.limite), cor, tip: `Tomado hoje\n${brl(u.usado)} de ${brl(c.limite)}` }], centro, c.limite, `${Math.round(pct)}% do limite usado`)}
+      <div class="lado">
+        <div class="rot">Livre para usar</div>
+        <div class="num-g ${u.disponivel < 0 ? 'neg' : ''}">${brl(u.disponivel)}</div>
+        <p class="sub">${brl(u.usado)} tomados de ${brl(c.limite)}</p>
+        ${pes.length ? `<ul class="leg-lista compacta">${pes.map(([id, n, v]) => legItem(COR_PESSOA[id], esc(n), v, null)).join('')}</ul>` : ''}
+      </div>
+    </div>
+  </section>`;
+}
+function blocoFatura(c, pv) {
+  const folga = c.teto ? c.teto - pv.total : 0, acima = c.teto ? pv.previsto - c.teto : 0;
+  const base = pv.base === 'ritmo' ? `No ritmo de ${brl(pv.ritmo)} por dia nas compras à vista.` : pv.base === 'anterior' ? 'Ciclo no começo: previsão baseada na fatura anterior.' : 'Ciclo no começo: ainda sem ritmo para projetar.';
+  const stat = (r, v, cls = '', sub = '') => `<div class="stat"><span>${r}</span><b class="${cls}">${v}</b>${sub ? `<small>${sub}</small>` : ''}</div>`;
+  return `<section class="card bloco">
+    <div class="bloco-cab"><h3>Fatura de ${esc(mesSo(pv.aberta))}${S.cartoes.length > 1 ? ' · ' + esc(c.nome) : ''}</h3><span class="muted mini">fecha ${dataCurta(pv.fecha)} · ${pv.restantes} ${pv.restantes === 1 ? 'dia' : 'dias'}</span></div>
+    <div class="stats">
+      ${stat('Até agora', brl(pv.total))}
+      ${stat('Previsão', brl(pv.previsto), acima > 0 ? 'neg' : '', acima > 0 ? `${brl(acima)} acima da meta` : '')}
+      ${c.teto ? stat('Dá para gastar por dia', brl(Math.max(0, folga) / pv.restantes), folga <= 0 ? 'neg' : '', `meta ${brl(c.teto)}`) : stat('Meta', '—', '', `<button class="link" data-acao="editar-cartao" data-id="${esc(c.id)}">definir</button>`)}
+    </div>
+    ${graficoFatura(c, pv)}
+    <p class="sub mini">${base} Já inclui ${brl(pv.certo)} de parcelas e contas fixas do ciclo.</p>
+  </section>`;
+}
+function alertasCartao(c, u, pv) {
+  const a = [], nome = esc(c.nome), fecha = dataCurta(pv.fecha), mesF = esc(mesSo(pv.aberta));
+  if (c.limite) {
+    const pct = u.pct, pctPrev = round2(u.usado + (pv.previsto - pv.total)) / c.limite * 100;
+    if (pct >= 100) a.push(['cr', `<b>${nome}: limite estourado.</b> ${brl(u.usado)} tomados de ${brl(c.limite)}.`]);
+    else if (pct >= 90) a.push(['cr', `<b>${nome}: ${Math.round(pct)}% do limite usado.</b> Restam só ${brl(u.disponivel)}.`]);
+    else if (pctPrev >= 100) a.push(['cr', `<b>${nome}: no ritmo atual o limite acaba antes do fechamento</b> (${fecha}).`]);
+    else if (pct >= 70) a.push(['at', `<b>${nome}: ${Math.round(pct)}% do limite usado.</b> Restam ${brl(u.disponivel)}.`]);
+  }
+  if (c.teto && pv.total > c.teto) a.push(['cr', `<b>A fatura de ${mesF} já passou da meta</b> em ${brl(pv.total - c.teto)}.`]);
+  else if (c.teto && pv.previsto > c.teto) a.push(['at', `<b>A fatura de ${mesF} deve fechar ${brl(pv.previsto - c.teto)} acima da meta.</b>`]);
+  return a;
+}
+
 function vPainel() {
   if (!S.receitas.length && !S.fixas.length && !S.lancamentos.length && !S.cartoes.length) return vBoasVindas();
-  const R = resumoMes(MES);
-  const renda = R.receitaTotal, comp = R.comprometido, livre = R.livre;
-  const pct = renda > 0 ? Math.round(comp / renda * 100) : null;
-  const rel = difMeses(mesAtual(), MES);
+  const R = resumoMes(MES), comp = R.comprometido, rel = difMeses(mesAtual(), MES);
+  const cart = rel === 0 ? S.cartoes.map(c => ({ c, u: usoLimite(c), pv: previsaoFatura(c) })) : [];
+  const alertas = cart.flatMap(x => alertasCartao(x.c, x.u, x.pv));
+  if (R.livre < 0 && R.receitaTotal) alertas.push(['cr', `<b>Os gastos de ${esc(mesSo(MES))} passam da renda</b> em ${brl(-R.livre)}.`]);
   const falta = [];
   if (!S.receitas.length) falta.push(['renda e vales', 'nova-receita']);
   if (!S.cartoes.length) falta.push(['cartões', 'novo-cartao']);
   if (!S.fixas.length) falta.push(['contas fixas', 'nova-fixa']);
-  let h = '';
-  h += avisoConvite();
-  const lim = rel === 0 && S.cartoes.length ? secaoLimite() : null;
-  if (lim) h += lim.alertas.map(a => `<div class="aviso alerta" role="alert"><span>${a}</span></div>`).join('');
+
+  let h = avisoConvite();
+  h += `<div class="ola"><div><h1>Oi, ${esc(pessoaNome(EU()))}</h1><p class="sub">${rel !== 0 ? `Você está vendo ${esc(nomeMes(MES))}.` : alertas.length ? `${alertas.length === 1 ? 'Tem 1 ponto' : `Tem ${alertas.length} pontos`} de atenção hoje.` : 'Tudo sob controle por aqui.'}</p></div>
+    <button class="btn primario" data-acao="novo-lanc">+ Lançar gasto</button></div>`;
+  h += alertas.map(([n, t]) => `<div class="alerta ${n}" role="alert"><i>${n === 'cr' ? '⚠' : '!'}</i><span>${t}</span></div>`).join('');
   if (falta.length) h += `<div class="aviso"><span>Para o painel ficar completo, falta cadastrar: ${falta.map(([t, a]) => `<button class="link" data-acao="${a}">${t}</button>`).join(', ')}.</span></div>`;
 
-  const segs = [];
-  if (R.fixasTotal > 0) segs.push(`<span class="seg c-fixas" style="flex:${+R.fixasTotal || 0} 1 0" data-tip="Contas fixas\n${brl(R.fixasTotal)}"></span>`);
-  if (R.variaveisTotal > 0) segs.push(`<span class="seg c-var" style="flex:${+R.variaveisTotal || 0} 1 0" data-tip="Variáveis\n${brl(R.variaveisTotal)}"></span>`);
-  if (livre > 0) segs.push(`<span class="seg c-livre" style="flex:${+livre || 0} 1 0" data-tip="Sobra\n${brl(livre)}"></span>`);
-  const marcaRenda = comp > renda && renda > 0 ? `<i style="left:${(renda / comp * 100).toFixed(2)}%" data-tip="Renda do mês\n${brl(renda)}"></i>` : '';
-  h += `<section class="card hero">
-    <div class="hero-top">
-      <div>
-        <div class="rot">Sobra prevista em ${esc(nomeMes(MES))}</div>
-        <div class="hero-num ${livre < 0 ? 'neg' : ''}">${livre < 0 ? '⚠ ' : ''}${brl(livre)}</div>
-        <p class="sub">${renda ? `${brl(comp)} já comprometidos de ${brl(renda)} de renda (${pct}%).` : 'Cadastre a renda para ver quanto sobra.'}${livre < 0 && renda ? ' <b class="neg">Os gastos já passam da renda do mês.</b>' : ''}</p>
-      </div>
-      ${rel === 0 ? `<button class="btn" data-acao="mes" data-d="1">Ver o mês que vem →</button>` : `<button class="btn" data-acao="mes-hoje">Voltar para este mês</button>`}
-    </div>
-    ${segs.length ? `<div class="barra-comp" role="img" aria-label="Fixas ${brl(R.fixasTotal)}, variáveis ${brl(R.variaveisTotal)}, sobra ${brl(Math.max(livre, 0))}">${segs.join('')}${marcaRenda}</div>` : ''}
-    <div class="leg">
-      <span><i class="ponto c-fixas"></i>Fixas <b>${brl(R.fixasTotal)}</b></span>
-      <span><i class="ponto c-var"></i>Variáveis <b>${brl(R.variaveisTotal)}</b></span>
-      <span><i class="ponto c-livre"></i>Sobra <b>${brl(Math.max(livre, 0))}</b></span>
-      ${marcaRenda ? '<span><i class="traco" style="width:2px;height:12px;border:0;background:var(--tx)"></i>Renda</span>' : ''}
-    </div>
+  h += `<div class="grid dois">${blocoSobra(R, rel)}${cart.length ? blocoCartao(cart[0].c, cart[0].u) : ''}</div>`;
+  if (cart.length > 1) h += `<div class="grid dois">${cart.slice(1).map(x => blocoCartao(x.c, x.u)).join('')}</div>`;
+  h += cart.map(x => blocoFatura(x.c, x.pv)).join('');
+
+  // para onde vai o dinheiro + quem gastou
+  const cats = Object.entries(R.cats).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+  const topo = cats.slice(0, 5), resto = cats.slice(5).reduce((s, [, v]) => s + v, 0);
+  const segC = topo.map(([c, v], i) => ({ v, cor: `--c${i + 1}`, tip: `${c}\n${brl(v)} · ${Math.round(v / comp * 100)}%`, acao: 'ver-cat', val: c }));
+  if (resto > 0) segC.push({ v: resto, cor: '--s-neutro', tip: `Outras categorias\n${brl(resto)}` });
+  const pes = [...S.pessoas.map(p => [p.id, p.nome]), ['casal', 'Casal']].map(([id, n]) => [id, n, R.pessoas[id] || 0]).filter(x => x[2] > 0);
+  const totP = pes.reduce((s, x) => s + x[2], 0);
+  h += `<div class="grid dois">
+    <section class="card bloco"><div class="bloco-cab"><h3>Para onde vai o dinheiro</h3></div>
+      ${cats.length ? `<div class="bloco-corpo">
+        ${anel(segC, `<small>total</small><b>${brlC(comp)}</b>`, 0, 'Gastos por categoria')}
+        <ul class="leg-lista">${topo.map(([c, v], i) => legItem(`--c${i + 1}`, `${catIco(c)} ${esc(c)}`, v, Math.round(v / comp * 100), ` class="clic" data-acao="ver-cat" data-v="${esc(c)}" tabindex="0"`)).join('')}${resto > 0 ? legItem('--s-neutro', `Outras (${cats.length - 5})`, resto, Math.round(resto / comp * 100)) : ''}</ul>
+      </div>` : '<p class="sub">Nada comprometido neste mês.</p>'}
+    </section>
+    <section class="card bloco"><div class="bloco-cab"><h3>Quem gastou</h3></div>
+      ${pes.length ? `<div class="barra-pes" role="img" aria-label="${esc(pes.map(x => `${x[1]} ${brl(x[2])}`).join(', '))}">${pes.map(([id, n, v]) => `<span style="flex:${v} 1 0;background:var(${COR_PESSOA[id]})" data-tip="${esc(`${n}\n${brl(v)} · ${Math.round(v / totP * 100)}%`)}"></span>`).join('')}</div>
+      <ul class="leg-lista larga">${pes.map(([id, n, v]) => legItem(COR_PESSOA[id], esc(n), v, Math.round(v / totP * 100))).join('')}</ul>
+      ${R.pessoas.casal ? `<p class="sub mini">Dividindo o que é do casal ao meio: ${partes(R.pessoas).map(([n, v]) => `${esc(n)} <b>${brl(v)}</b>`).join(' · ')}.</p>` : ''}
+      <p class="sub mini">VR e VA ficam de fora.</p>` : '<p class="sub">Nada comprometido neste mês.</p>'}
+    </section>
+  </div>`;
+
+  // últimos lançamentos
+  const ult = S.lancamentos.slice().sort((a, b) => b.data.localeCompare(a.data) || (b.criadoEm || '').localeCompare(a.criadoEm || '')).slice(0, 5);
+  h += `<section class="card bloco"><div class="bloco-cab"><h3>Últimos lançamentos</h3><button class="link mini" data-aba="lancamentos">ver todos →</button></div>
+    ${ult.length ? `<div class="lista">${ult.map(l => `<button class="linha" data-acao="editar-lanc" data-id="${esc(l.id)}"><span class="l-ico emoji">${catIco(l.categoria)}</span><span class="l-desc"><b>${esc(l.descricao)}</b><small>${dataCurta(l.data)} · ${esc(l.categoria)} · ${esc(pessoaNome(l.pessoaId))}</small></span><span class="l-valor">${brl(round2(l.valor * (l.parcelas || 1)))}${(l.parcelas || 1) > 1 ? `<small>${l.parcelas}x</small>` : ''}</span></button>`).join('')}</div>` : '<p class="sub">Nenhum lançamento ainda. Use o botão “+ Lançar gasto”.</p>'}
   </section>`;
 
-  const rendaDet = S.pessoas.filter(p => R.rendaPessoa[p.id]).map(p => `<span>${esc(p.nome)}<b>${brl(R.rendaPessoa[p.id])}</b></span>`).join('');
-  h += `<div class="grid kpis">
-    <div class="card kpi"><div class="rot">Renda do mês</div><div class="val">${brl(renda)}</div><div class="det">${rendaDet || '<span class="muted">Nenhuma renda neste mês</span>'}</div></div>
-    <div class="card kpi"><div class="rot"><i class="ponto c-fixas"></i>Contas fixas</div><div class="val">${brl(R.fixasTotal)}</div><div class="det"><span>Na conta<b>${brl(R.fixasContaTotal)}</b></span><span>No cartão<b>${brl(R.fixasCartaoTotal)}</b></span></div></div>
-    <div class="card kpi"><div class="rot"><i class="ponto c-var"></i>Variáveis</div><div class="val">${brl(R.variaveisTotal)}</div><div class="det"><span>No cartão<b>${brl(R.lancCartaoTotal)}</b></span><span>Pix, débito, dinheiro<b>${brl(R.avistaTotal)}</b></span><span>…das quais parcelas<b>${brl(R.parcelasTotal)}</b></span></div></div>
-    ${kpiVale('VR · refeição', R.vr)}${kpiVale('VA · alimentação', R.va)}
-  </div>`;
-
-  if (lim) h += lim.html;
-
+  // detalhes recolhidos
   const fats = [...R.faturas.values()].sort((a, b) => (a.cartao?.vencimento || 99) - (b.cartao?.vencimento || 99));
-  if (fats.length || S.cartoes.length) {
-    h += `<section class="card"><h3>Faturas que vencem em ${esc(mesSo(MES))}<span class="muted">${brl(R.fixasCartaoTotal + R.lancCartaoTotal)}</span></h3>
-      <div class="lista">${fats.length ? fats.map(ft => {
-        const c = ft.cartao;
-        return `<button class="linha" data-acao="ver-cartao" data-id="${esc(ft.id)}">
-          <span class="l-ico">${esc((c?.nome || '?').slice(0, 2).toUpperCase())}</span>
-          <span class="l-desc"><b>${esc(nomeCartao(ft.id))}${c ? ` <span class="muted">· ${esc(pessoaNome(c.pessoaId))}</span>` : ''}</b><small>${c ? `vence ${pad(Math.min(c.vencimento, diasNoMes(MES)))}/${MES.slice(5)} · ` : ''}${ft.itens} ${ft.itens === 1 ? 'item' : 'itens'}${ft.parcelas ? ` · parcelas ${brl(ft.parcelas)}` : ''}</small></span>
-          <span class="l-valor">${brl(ft.total)}${c && c.limite ? `<small>limite ${brlC(c.limite)}</small>` : ''}</span></button>`;
-      }).join('') : '<p class="sub">Nenhuma fatura vence neste mês.</p>'}</div>
-      ${fats.filter(ft => ft.total).map(ft => `<p class="sub" style="margin-top:10px">Parte de cada um${fats.length > 1 ? ' · ' + esc(nomeCartao(ft.id)) : ''}: ${partes(ft.porPessoa).map(([n, v]) => `${esc(n)} <b>${brl(v)}</b>`).join(' · ')}${ft.porPessoa.casal ? ` <span class="muted">(inclui ${brl(ft.porPessoa.casal)} do casal, dividido ao meio)</span>` : ''}</p>`).join('')}
-      ${S.cartoes.length && rel === 0 ? `<p class="sub" style="margin-top:10px">Comprando hoje: ${S.cartoes.map(c => `${esc(c.nome)} → fatura de ${esc(mesSo(mesFaturaDe(hojeISO(), c)))}`).join(' · ')}</p>` : ''}
-    </section>`;
-  }
+  if (fats.length) h += dobra(`Faturas que vencem em ${esc(mesSo(MES))}`, brl(R.fixasCartaoTotal + R.lancCartaoTotal), `<div class="lista">${fats.map(ft => {
+    const c = ft.cartao;
+    return `<button class="linha" data-acao="ver-cartao" data-id="${esc(ft.id)}"><span class="l-ico emoji">💳</span>
+      <span class="l-desc"><b>${esc(nomeCartao(ft.id))}</b><small>${c ? `vence ${pad(Math.min(c.vencimento, diasNoMes(MES)))}/${MES.slice(5)} · ` : ''}${ft.itens} ${ft.itens === 1 ? 'item' : 'itens'}${ft.parcelas ? ` · parcelas ${brl(ft.parcelas)}` : ''}</small></span>
+      <span class="l-valor">${brl(ft.total)}</span></button>`;
+  }).join('')}</div>
+  ${fats.filter(ft => ft.total).map(ft => `<p class="sub" style="margin-top:10px">Parte de cada um${fats.length > 1 ? ' · ' + esc(nomeCartao(ft.id)) : ''}: ${partes(ft.porPessoa).map(([n, v]) => `${esc(n)} <b>${brl(v)}</b>`).join(' · ')}${ft.porPessoa.casal ? ` <span class="muted">(inclui ${brl(ft.porPessoa.casal)} do casal, dividido ao meio)</span>` : ''}</p>`).join('')}`);
 
-  h += `<section class="card"><h3>Próximos 6 meses · o que já está comprometido</h3>${graficoProjecao()}
+  h += dobra('Próximos 6 meses', 'o que já está comprometido', `${graficoProjecao()}
     <div class="leg" style="margin-top:10px"><span><i class="ponto c-fixas"></i>Contas fixas</span><span><i class="ponto c-var"></i>Variáveis já lançadas</span><span><i class="traco"></i>Renda prevista</span></div>
-    <p class="sub" style="margin-top:8px">Os meses à frente mostram só o que já está garantido: contas fixas, parcelas e compras que caem nessas faturas. O número embaixo é a sobra.</p></section>`;
-
-  const cats = Object.entries(R.cats).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
-  const topo = cats.slice(0, 8); const resto = cats.slice(8).reduce((s, [, v]) => s + v, 0);
-  if (resto > 0) topo.push(['Outras categorias', resto]);
-  const maxC = Math.max(1, ...topo.map(x => x[1]));
-  const pes = [...S.pessoas.map(p => [p.nome, R.pessoas[p.id] || 0]), ['Casal', R.pessoas.casal || 0]].filter(x => x[1] > 0);
-  const maxP = Math.max(1, ...pes.map(x => x[1]));
-  h += `<div class="grid dois">
-    <section class="card"><h3>Para onde vai o dinheiro</h3>${topo.length ? topo.map(([c, v]) => hbar(c, v, maxC, comp)).join('') : '<p class="sub">Nada comprometido neste mês.</p>'}</section>
-    <section class="card"><h3>Por pessoa</h3>${pes.length ? pes.map(([n, v]) => hbar(n, v, maxP, comp)).join('') : '<p class="sub">Nada comprometido neste mês.</p>'}<p class="sub" style="margin-top:8px">“Casal” são as contas fixas divididas. VR e VA ficam de fora.</p></section>
-  </div>`;
+    <p class="sub mini">Os meses à frente mostram só o que já está garantido: contas fixas, parcelas e compras que caem nessas faturas. O número embaixo é a sobra.</p>`);
 
   const fixasMes = S.fixas.filter(f => ativo(f, MES)).sort((a, b) => a.dia - b.dia);
   if (fixasMes.length) {
     const hojeDia = +hojeISO().slice(8);
-    h += `<section class="card"><h3>Contas fixas de ${esc(mesSo(MES))}<button class="btn peq" data-acao="nova-fixa">+ Conta fixa</button></h3><div class="lista">${fixasMes.map(f => {
+    h += dobra(`Contas fixas de ${esc(mesSo(MES))}`, brl(R.fixasTotal), `<div class="lista">${fixasMes.map(f => {
       const passou = rel === 0 && hojeDia > f.dia;
       return `<button class="linha ${passou ? 'passou' : ''}" data-acao="editar-fixa" data-id="${esc(f.id)}">
         <span class="l-ico">${pad(f.dia)}<small>${MESES_C[+MES.slice(5) - 1]}</small></span>
         <span class="l-desc"><b>${esc(f.descricao)}</b><small>${esc(f.categoria)} · ${esc(pessoaNome(f.pessoaId))} · ${f.meio === 'cartao' ? 'no cartão ' + esc(nomeCartao(f.cartaoId)) : esc(ROT_MEIO[f.meio] || '')}${passou ? ' · dia já passou' : ''}</small></span>
         <span class="l-valor">${brl(f.valor)}</span></button>`;
-    }).join('')}</div></section>`;
+    }).join('')}</div><div class="botoes"><button class="btn peq" data-acao="nova-fixa">+ Conta fixa</button></div>`);
   }
+
+  const rendaDet = S.pessoas.filter(p => R.rendaPessoa[p.id]).map(p => `<span>${esc(p.nome)}<b>${brl(R.rendaPessoa[p.id])}</b></span>`).join('');
+  h += dobra('Números do mês', `renda ${brl(R.receitaTotal)}`, `<div class="grid kpis">
+    <div class="kpi"><div class="rot">Renda do mês</div><div class="val">${brl(R.receitaTotal)}</div><div class="det">${rendaDet || '<span class="muted">Nenhuma renda neste mês</span>'}</div></div>
+    <div class="kpi"><div class="rot"><i class="ponto c-fixas"></i>Contas fixas</div><div class="val">${brl(R.fixasTotal)}</div><div class="det"><span>Na conta<b>${brl(R.fixasContaTotal)}</b></span><span>No cartão<b>${brl(R.fixasCartaoTotal)}</b></span></div></div>
+    <div class="kpi"><div class="rot"><i class="ponto c-var"></i>Variáveis</div><div class="val">${brl(R.variaveisTotal)}</div><div class="det"><span>No cartão<b>${brl(R.lancCartaoTotal)}</b></span><span>Pix, débito, dinheiro<b>${brl(R.avistaTotal)}</b></span><span>…das quais parcelas<b>${brl(R.parcelasTotal)}</b></span></div></div>
+    ${kpiVale('VR · refeição', R.vr).replace('class="card kpi"', 'class="kpi"')}${kpiVale('VA · alimentação', R.va).replace('class="card kpi"', 'class="kpi"')}
+  </div>`);
   return h;
 }
 
@@ -579,6 +658,8 @@ function renderListaLanc() {
   const tot = itens.reduce((s, x) => s + (ehVale(x.l.meio) ? 0 : x.valor), 0);
   const totV = itens.reduce((s, x) => s + (ehVale(x.l.meio) ? x.valor : 0), 0);
   $('#resumoLanc').innerHTML = itens.length ? `<b>${itens.length}</b> lançamento${itens.length > 1 ? 's' : ''} · <b>${brl(tot)}</b>${totV ? ` + ${brl(totV)} em VR/VA` : ''} · ${pag ? 'compras no cartão aparecem no mês da fatura' : 'compras parceladas aparecem pelo valor total'}` : '';
+  const fixCat = FILTRO.cat ? S.fixas.filter(f => f.categoria === FILTRO.cat && ativo(f, MES)) : [];
+  if (fixCat.length) $('#resumoLanc').innerHTML += `${itens.length ? ' · ' : ''}<b>${brl(fixCat.reduce((s, f) => s + f.valor, 0))}</b> em contas fixas de ${esc(FILTRO.cat)} (${fixCat.map(f => esc(f.descricao)).join(', ')}) — elas ficam em <button class="link" data-aba="cadastros">Cadastros</button>`;
   if (!itens.length) {
     $('#listaLanc').innerHTML = `<div class="vazio">${S.lancamentos.length ? 'Nada com esses filtros neste mês.' : 'Nenhum lançamento ainda. Use “+ Lançamento”, importe uma fatura ou cole uma notificação do banco.'}</div>`;
     return;
@@ -1390,13 +1471,12 @@ async function restaurarBackup(file) {
   } catch (e) { toast('Esse arquivo não parece um backup deste app.', 5000); }
 }
 function carregarExemplo() {
-  const s = estadoVazio(); s.exemplo = true;
+  const s = estadoVazio(); s.exemplo = true; s.pessoas = [{ id: 'p1', nome: 'Henrique' }, { id: 'p2', nome: 'Shai' }];
   const H = 'p1', C = 'p2', M0 = mesAtual(), hojeDia = +hojeISO().slice(8);
   const dt = (off, dia) => dataNoMes(somaMes(M0, off), off === 0 ? Math.min(dia, hojeDia) : dia);
   const ini = somaMes(M0, -4);
   s.cartoes = [
-    { id: 'c1', nome: 'Nubank', pessoaId: H, final: '1234', fechamento: 3, vencimento: 10, limite: 8000 },
-    { id: 'c2', nome: 'Itaú', pessoaId: C, final: '5678', fechamento: 26, vencimento: 5, limite: 6000 },
+    { id: 'c1', nome: 'Santander', pessoaId: H, final: '1234', fechamento: 25, vencimento: 5, limite: 12000, teto: 4500 },
   ];
   s.receitas = [
     { id: uid(), pessoaId: H, tipo: 'salario', descricao: 'Salário', valor: 6800, dia: 5, inicio: ini, fim: '' },
@@ -1416,34 +1496,34 @@ function carregarExemplo() {
     fx('Internet', 120, 20, 'Contas da casa', 'casal', 'cartao', 'c1'),
     fx('Celular 1', 65, 12, 'Contas da casa', H, 'cartao', 'c1'),
     fx('Spotify', 34.9, 22, 'Assinaturas', H, 'cartao', 'c1'),
-    fx('Celular 2', 55, 12, 'Contas da casa', C, 'cartao', 'c2'),
-    fx('Netflix', 44.9, 18, 'Assinaturas', 'casal', 'cartao', 'c2'),
+    fx('Celular 2', 55, 12, 'Contas da casa', C, 'cartao', 'c1'),
+    fx('Netflix', 44.9, 18, 'Assinaturas', 'casal', 'cartao', 'c1'),
   ];
   const L = [
     [-3, 14, 'GELADEIRA BRASTEMP FROST FREE', 4200, 'cartao', 'c1', H, 10],
-    [-1, 2, 'NOTEBOOK DELL INSPIRON', 3000, 'cartao', 'c2', C, 6],
+    [-1, 2, 'NOTEBOOK DELL INSPIRON', 3000, 'cartao', 'c1', C, 6],
     [-1, 20, 'LATAM AIRLINES', 1680, 'cartao', 'c1', H, 4],
     [-1, 4, 'IFOOD *RESTAURANTE SABOR', 68.9, 'cartao', 'c1', H],
     [-1, 6, 'UBER *TRIP', 23.4, 'cartao', 'c1', H],
-    [-1, 8, 'SUPERMERCADO BOM PRECO', 312.55, 'cartao', 'c2', C],
-    [-1, 11, 'DROGASIL', 54.2, 'cartao', 'c2', C],
+    [-1, 8, 'SUPERMERCADO BOM PRECO', 312.55, 'cartao', 'c1', C],
+    [-1, 11, 'DROGASIL', 54.2, 'cartao', 'c1', C],
     [-1, 12, 'POSTO IPIRANGA', 220, 'cartao', 'c1', H],
     [-1, 15, 'RESTAURANTE DONA MARIA', 42, 'vr', '', C],
     [-1, 18, 'CINEMARK', 96, 'cartao', 'c1', H],
-    [-1, 21, 'MERCADO LIVRE', 189.9, 'cartao', 'c2', C],
+    [-1, 21, 'MERCADO LIVRE', 189.9, 'cartao', 'c1', C],
     [-1, 22, 'ASSAI ATACADISTA', 428.3, 'va', '', C],
     [-1, 24, 'PIX FEIRA DO BAIRRO', 65, 'pix', '', H],
-    [-1, 27, 'RENNER', 259.8, 'cartao', 'c2', C],
+    [-1, 27, 'RENNER', 259.8, 'cartao', 'c1', C],
     [-1, 29, 'IFOOD *PIZZARIA', 89.9, 'cartao', 'c1', H],
-    [-1, 30, 'PETZ', 142, 'cartao', 'c2', C],
+    [-1, 30, 'PETZ', 142, 'cartao', 'c1', C],
     [0, 1, 'PADARIA PAO QUENTE', 28.5, 'cartao', 'c1', H],
     [0, 2, 'UBER *TRIP', 18.7, 'cartao', 'c1', H],
-    [0, 3, 'SUPERMERCADO BOM PRECO', 276.4, 'cartao', 'c2', C],
+    [0, 3, 'SUPERMERCADO BOM PRECO', 276.4, 'cartao', 'c1', C],
     [0, 3, 'RESTAURANTE SABOR CASEIRO', 38.5, 'vr', '', C],
     [0, 4, 'SHELL SELECT', 180, 'cartao', 'c1', H],
     [0, 5, 'DROGARIA SAO PAULO', 37.8, 'debito', '', H],
     [0, 5, 'AMAZON MARKETPLACE', 349, 'cartao', 'c1', H, 3],
-    [0, 6, 'IFOOD *HAMBURGUERIA', 72.3, 'cartao', 'c2', C],
+    [0, 6, 'IFOOD *HAMBURGUERIA', 72.3, 'cartao', 'c1', C],
     [0, 6, 'CARREFOUR', 198.65, 'va', '', C],
     [0, 7, 'BARBEARIA DO ZE', 60, 'pix', '', H],
   ];
@@ -1823,6 +1903,7 @@ const ACOES = {
   'nova-fixa': () => formFixa(),
   'editar-fixa': t => { const f = S.fixas.find(x => x.id === t.dataset.id); if (f) formFixa(f); },
   'ver-cartao': t => { FILTRO = { q: '', pessoa: '', cat: '', meio: 'cartao:' + t.dataset.id, visao: 'pagamento' }; ABA = 'lancamentos'; render(); window.scrollTo(0, 0); },
+  'ver-cat': t => { FILTRO = { q: '', pessoa: '', meio: '', cat: t.dataset.v, visao: 'pagamento' }; ABA = 'lancamentos'; render(); window.scrollTo(0, 0); },
   'ir-importar': () => { ABA = 'importar'; render(); window.scrollTo(0, 0); },
   visao: t => { FILTRO.visao = t.dataset.v; render(); },
   'limpar-filtros': () => { FILTRO = { q: '', pessoa: '', meio: '', cat: '', visao: FILTRO.visao }; render(); },
@@ -1894,6 +1975,8 @@ function mostrarTip(el, x, y) {
   tip.style.left = Math.max(8, left) + 'px'; tip.style.top = Math.max(8, top) + 'px';
 }
 document.addEventListener('pointermove', e => { const el = e.target.closest && e.target.closest('[data-tip]'); if (el) mostrarTip(el, e.clientX, e.clientY); else tip.classList.remove('on'); });
+document.addEventListener('pointerdown', e => { const el = e.target.closest && e.target.closest('[data-tip]'); if (el) mostrarTip(el, e.clientX, e.clientY); });
+document.addEventListener('keydown', e => { if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('li[data-acao]')) { e.preventDefault(); e.target.click(); } });
 document.addEventListener('focusin', e => { const el = e.target.closest && e.target.closest('[data-tip]'); if (el) { const r = el.getBoundingClientRect(); mostrarTip(el, r.left + r.width / 2, r.top + 10); } });
 document.addEventListener('focusout', () => tip.classList.remove('on'));
 addEventListener('scroll', () => tip.classList.remove('on'), { passive: true });
