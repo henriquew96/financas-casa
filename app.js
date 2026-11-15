@@ -110,11 +110,11 @@ function sanear(tipo, d) {
   if (tipo === 'lancamento') {
     if (!RE_DIAOK.test(d.data) || !RE_MESOK.test(d.mesRef)) return null;
     const parcelas = intOk(d.parcelas, 1, 72);
-    return { id, data: d.data, descricao: txt(d.descricao, 160) || 'Sem descrição', valor: numOk(d.valor), categoria: txt(d.categoria, 40) || 'Outros', pessoaId: pesOk(d.pessoaId), meio: MEIOS_LANC.includes(d.meio) ? d.meio : 'pix', cartaoId: idOk(d.cartaoId), parcelas, parcelaAtual: intOk(d.parcelaAtual, 1, parcelas), mesRef: d.mesRef, mesRefAuto: !!d.mesRefAuto, origem: ORIGENS.includes(d.origem) ? d.origem : 'manual', obs: txt(d.obs, 300), criadoEm: RE_DIAOK.test(d.criadoEm) ? d.criadoEm : '' };
+    return { id, data: d.data, descricao: txt(d.descricao, 160) || 'Sem descrição', valor: numOk(d.valor), categoria: txt(d.categoria, 40) || 'Outros', pessoaId: pesOk(d.pessoaId, true), meio: MEIOS_LANC.includes(d.meio) ? d.meio : 'pix', cartaoId: idOk(d.cartaoId), parcelas, parcelaAtual: intOk(d.parcelaAtual, 1, parcelas), mesRef: d.mesRef, mesRefAuto: !!d.mesRefAuto, origem: ORIGENS.includes(d.origem) ? d.origem : 'manual', obs: txt(d.obs, 300), criadoEm: RE_DIAOK.test(d.criadoEm) ? d.criadoEm : '' };
   }
   if (tipo === 'receita') return { id, pessoaId: pesOk(d.pessoaId), tipo: ['salario', 'vr', 'va', 'extra'].includes(d.tipo) ? d.tipo : 'extra', descricao: txt(d.descricao, 80), valor: numOk(d.valor), dia: intOk(d.dia, 1, 31), inicio: mesOk(d.inicio), fim: mesOk(d.fim) };
   if (tipo === 'fixa') return { id, descricao: txt(d.descricao, 80) || 'Conta', valor: numOk(d.valor), dia: intOk(d.dia, 1, 31), categoria: txt(d.categoria, 40) || 'Outros', pessoaId: pesOk(d.pessoaId, true), meio: ['conta', 'cartao', 'vr', 'va'].includes(d.meio) ? d.meio : 'conta', cartaoId: idOk(d.cartaoId), inicio: mesOk(d.inicio), fim: mesOk(d.fim) };
-  if (tipo === 'cartao') return { id, nome: txt(d.nome, 40) || 'Cartão', pessoaId: pesOk(d.pessoaId), final: /^\d{4}$/.test(d.final) ? d.final : '', fechamento: intOk(d.fechamento, 1, 31), vencimento: intOk(d.vencimento, 1, 31), limite: Math.max(0, numOk(d.limite)) };
+  if (tipo === 'cartao') return { id, nome: txt(d.nome, 40) || 'Cartão', pessoaId: pesOk(d.pessoaId), final: /^\d{4}$/.test(d.final) ? d.final : '', fechamento: intOk(d.fechamento, 1, 31), vencimento: intOk(d.vencimento, 1, 31), limite: Math.max(0, numOk(d.limite)), teto: Math.max(0, numOk(d.teto)) };
   return null;
 }
 function sanearEstado(o) {
@@ -192,7 +192,7 @@ function ocorrencia(l, M) {
 function resumoMes(M) {
   const R = { M, receitas: [], receitaTotal: 0, rendaPessoa: {}, vr: {credito:0, gasto:0}, va: {credito:0, gasto:0}, fixasContaTotal: 0, fixasCartaoTotal: 0, faturas: new Map(), lancCartaoTotal: 0, avistaTotal: 0, parcelasTotal: 0, cats: {}, pessoas: {} };
   const soma = (o, k, v) => { o[k] = (o[k] || 0) + v; };
-  const fatura = id => { if (!R.faturas.has(id)) R.faturas.set(id, { id, cartao: cartaoPorId(id), itens: 0, total: 0, parcelas: 0 }); return R.faturas.get(id); };
+  const fatura = id => { if (!R.faturas.has(id)) R.faturas.set(id, { id, cartao: cartaoPorId(id), itens: 0, total: 0, parcelas: 0, avulsas: 0, porPessoa: {} }); return R.faturas.get(id); };
   for (const r of S.receitas) if (ativo(r, M)) {
     if (ehVale(r.tipo)) R[r.tipo].credito += r.valor;
     else { R.receitas.push(r); R.receitaTotal += r.valor; soma(R.rendaPessoa, r.pessoaId, r.valor); }
@@ -204,7 +204,7 @@ function resumoMes(M) {
         if (!ativo(f, C)) continue;
         const mf = c ? mesFaturaDe(dataNoMes(C, f.dia), c) : somaMes(C, 1);
         if (mf !== M) continue;
-        const ft = fatura(f.cartaoId || ''); ft.itens++; ft.total += f.valor;
+        const ft = fatura(f.cartaoId || ''); ft.itens++; ft.total += f.valor; soma(ft.porPessoa, f.pessoaId, f.valor);
         R.fixasCartaoTotal += f.valor; soma(R.cats, f.categoria, f.valor); soma(R.pessoas, f.pessoaId, f.valor);
       }
     } else if (ativo(f, M)) {
@@ -217,7 +217,9 @@ function resumoMes(M) {
     if (ehVale(l.meio)) { R[l.meio].gasto += l.valor; continue; }
     if (l.meio === 'cartao') {
       const ft = fatura(l.cartaoId || ''); ft.itens++; ft.total += l.valor; R.lancCartaoTotal += l.valor;
+      soma(ft.porPessoa, l.pessoaId, l.valor);
       if ((l.parcelas || 1) > 1) { R.parcelasTotal += l.valor; ft.parcelas += l.valor; }
+      else ft.avulsas += l.valor;
     } else R.avistaTotal += l.valor;
     soma(R.cats, l.categoria || 'Outros', l.valor); soma(R.pessoas, l.pessoaId, l.valor);
   }
@@ -227,6 +229,58 @@ function resumoMes(M) {
   R.livre = R.receitaTotal - R.comprometido;
   return R;
 }
+
+/* ---------- limite do cartão e previsão da fatura ---------- */
+const diasEntre = (a, b) => Math.round((Date.UTC(+b.slice(0, 4), +b.slice(5, 7) - 1, +b.slice(8)) - Date.UTC(+a.slice(0, 4), +a.slice(5, 7) - 1, +a.slice(8))) / 864e5);
+// Quanto do limite está tomado hoje: tudo que ainda não foi pago — a fatura fechada que ainda não venceu,
+// a fatura aberta e TODAS as parcelas futuras (o banco segura o valor inteiro da compra parcelada).
+// Contas fixas no cartão só entram depois do dia da cobrança. A fatura conta como paga depois do vencimento.
+function usoLimite(c) {
+  const hoje = hojeISO(), aberta = mesFaturaDe(hoje, c), ant = somaMes(aberta, -1);
+  const P = dataNoMes(ant, c.vencimento) >= hoje ? ant : aberta;   // primeira fatura ainda não paga
+  const porPessoa = {}; let usado = 0;
+  const add = (pid, v) => { usado += v; porPessoa[pid] = (porPessoa[pid] || 0) + v; };
+  for (const l of S.lancamentos) {
+    if (l.meio !== 'cartao' || (l.cartaoId || '') !== c.id || !l.mesRef) continue;
+    const n = (l.parcelas || 1) - (l.parcelaAtual || 1) + 1 - Math.max(0, difMeses(l.mesRef, P));
+    if (n > 0) add(l.pessoaId, l.valor * n);
+  }
+  for (const f of S.fixas) {
+    if (f.meio !== 'cartao' || f.cartaoId !== c.id) continue;
+    for (let C = somaMes(P, -2); C <= hoje.slice(0, 7); C = somaMes(C, 1)) {
+      const d = dataNoMes(C, f.dia);
+      if (ativo(f, C) && d <= hoje && mesFaturaDe(d, c) >= P) add(f.pessoaId, f.valor);
+    }
+  }
+  usado = round2(usado);
+  return { usado, porPessoa, aberta, primeira: P, disponivel: round2((c.limite || 0) - usado), pct: c.limite ? usado / c.limite * 100 : null };
+}
+// Ciclo da fatura aberta: do último fechamento até a véspera do próximo.
+function cicloAberto(c) {
+  const hoje = hojeISO(), M = hoje.slice(0, 7), F = +c.fechamento || 1;
+  const mIni = +hoje.slice(8) >= F ? M : somaMes(M, -1);
+  const ini = dataNoMes(mIni, F), fecha = dataNoMes(somaMes(mIni, 1), F);
+  const dias = Math.max(1, diasEntre(ini, fecha)), decorridos = Math.min(dias, Math.max(1, diasEntre(ini, hoje) + 1));
+  return { ini, fecha, dias, decorridos, restantes: dias - decorridos + 1 };   // "restantes" conta hoje
+}
+// Previsão de quanto a fatura aberta fecha: o que já é certo (parcelas e contas fixas do ciclo)
+// mais as compras à vista projetadas pelo ritmo diário do ciclo. Nos 4 primeiros dias o ritmo
+// ainda não diz nada, então vale o total de compras à vista da fatura anterior (se for maior).
+function previsaoFatura(c) {
+  const ci = cicloAberto(c), aberta = mesFaturaDe(hojeISO(), c);
+  const ft = resumoMes(aberta).faturas.get(c.id), ftAnt = resumoMes(somaMes(aberta, -1)).faturas.get(c.id);
+  const total = ft ? ft.total : 0, avulsas = ft ? Math.max(0, ft.avulsas) : 0, antAvulsas = ftAnt ? Math.max(0, ftAnt.avulsas) : 0;
+  let proj = avulsas / ci.decorridos * ci.dias, base = 'ritmo';
+  if (ci.decorridos < 5) { if (antAvulsas > avulsas) { proj = antAvulsas; base = 'anterior'; } else { proj = avulsas; base = 'cedo'; } }
+  const previsto = round2(total - avulsas + Math.max(proj, avulsas));
+  return { ...ci, aberta, total: round2(total), certo: round2(total - avulsas), avulsas: round2(avulsas), ritmo: avulsas / ci.decorridos, previsto, base, porPessoa: ft ? ft.porPessoa : {} };
+}
+// Divide ao meio o que é "Casal" e devolve a parte de cada pessoa.
+function partes(porPessoa) {
+  const meio = (porPessoa.casal || 0) / 2;
+  return S.pessoas.map(p => [p.nome, round2((porPessoa[p.id] || 0) + meio)]);
+}
+const nivelUso = pct => pct >= 90 ? 'estouro' : pct >= 70 ? 'atencao' : '';
 
 /* ---------- categorização ---------- */
 const REGRAS_PADRAO_LISTA = Object.entries(REGRAS_BASE).flatMap(([cat, ts]) => ts.map(t => ({ termo: norm(t), categoria: cat }))).sort((a, b) => b.termo.length - a.termo.length);
@@ -344,6 +398,42 @@ function graficoProjecao() {
       <div class="proj-sobra ${r.livre < 0 ? 'neg' : ''}">${r.livre < 0 ? '⚠ −' : ''}<span class="rs">R$ </span>${Math.abs(r.livre) < 1000 ? Math.round(Math.abs(r.livre)) : fmtNumC.format(Math.abs(r.livre))}</div></div>`;
   }).join('')}</div>`;
 }
+// Painel do cartão (só no mês corrente): quanto do limite está tomado e como a fatura aberta deve fechar.
+function secaoLimite() {
+  const alertas = [], linha = (r, v, cls = '') => `<span class="${cls}">${r}<b>${v}</b></span>`;
+  const cards = S.cartoes.map(c => {
+    const u = usoLimite(c), pv = previsaoFatura(c), nome = esc(c.nome), mesF = esc(mesSo(pv.aberta)), fecha = dataCurta(pv.fecha);
+    const usadoPrev = round2(u.usado + (pv.previsto - pv.total));
+    const pes = [...S.pessoas.map(p => [p.nome, u.porPessoa[p.id] || 0]), ['Casal', u.porPessoa.casal || 0]].filter(x => x[1]);
+    let h = '';
+    if (c.limite) {
+      const pct = u.pct, pctPrev = usadoPrev / c.limite * 100, niv = nivelUso(pct);
+      if (pct >= 100) alertas.push(`⚠ <b>${nome}: limite estourado.</b> ${brl(u.usado)} tomados de ${brl(c.limite)}.`);
+      else if (pct >= 90) alertas.push(`⚠ <b>${nome}: ${Math.round(pct)}% do limite usado.</b> Restam só ${brl(u.disponivel)}.`);
+      else if (pctPrev >= 100) alertas.push(`⚠ <b>${nome}: no ritmo atual o limite acaba antes do fechamento</b> (${fecha}). Hoje restam ${brl(u.disponivel)}.`);
+      else if (pct >= 70) alertas.push(`<b>${nome}: ${Math.round(pct)}% do limite usado.</b> Restam ${brl(u.disponivel)}.`);
+      h += `<div class="card kpi"><div class="rot">Limite do ${nome}</div><div class="val ${u.disponivel < 0 ? 'neg' : ''}">${brl(u.disponivel)} <small>livres</small></div>
+        <div class="medidor ${niv}" role="img" aria-label="${Math.round(pct)}% do limite usado"><span style="width:${Math.min(100, pct).toFixed(1)}%"></span></div>
+        <div class="det">${linha('Tomado hoje', `${brl(u.usado)} · ${Math.round(pct)}%`)}${linha('Limite', brl(c.limite))}${linha(`Previsto no fechamento (${fecha})`, `${brl(usadoPrev)} · ${Math.round(pctPrev)}%`, pctPrev >= 90 ? 'neg' : '')}${pes.map(([n, v]) => linha('…de ' + esc(n), brl(v))).join('')}</div>
+        <p class="sub mini">Conta a fatura que ainda não venceu, a fatura aberta e todas as parcelas futuras.</p></div>`;
+    } else {
+      h += `<div class="card kpi"><div class="rot">Limite do ${nome}</div><div class="val">${brl(u.usado)} <small>tomados</small></div>
+        <div class="det">${pes.map(([n, v]) => linha('…de ' + esc(n), brl(v))).join('')}</div>
+        <p class="sub mini"><button class="link" data-acao="editar-cartao" data-id="${esc(c.id)}">Informe o limite do cartão</button> para ver quanto ainda está livre e receber o aviso quando estiver perto.</p></div>`;
+    }
+    const folga = c.teto ? c.teto - pv.total : 0, acima = c.teto ? pv.previsto - c.teto : 0;
+    if (c.teto && pv.total > c.teto) alertas.push(`⚠ <b>Fatura de ${mesF} do ${nome} já passou da meta</b> em ${brl(pv.total - c.teto)}.`);
+    else if (c.teto && acima > 0) alertas.push(`⚠ <b>Fatura de ${mesF} do ${nome} deve fechar ${brl(acima)} acima da meta</b> (previsão ${brl(pv.previsto)}, meta ${brl(c.teto)}).`);
+    const pctT = c.teto ? pv.previsto / c.teto * 100 : 0;
+    const base = pv.base === 'ritmo' ? `Ritmo de ${brl(pv.ritmo)} por dia nas compras à vista, mantido até o fechamento.` : pv.base === 'anterior' ? 'O ciclo acabou de começar: a previsão usa as compras à vista da fatura anterior.' : 'O ciclo acabou de começar: ainda não há ritmo para projetar.';
+    h += `<div class="card kpi"><div class="rot">Fatura de ${mesF} · fecha ${fecha}</div><div class="val ${acima > 0 ? 'neg' : ''}">${brl(pv.previsto)} <small>previsão</small></div>
+      ${c.teto ? `<div class="medidor ${pctT > 100 ? 'estouro' : pctT >= 85 ? 'atencao' : ''}" role="img" aria-label="${Math.round(pctT)}% da meta"><span style="width:${Math.min(100, pctT).toFixed(1)}%"></span></div>` : ''}
+      <div class="det">${linha('Já está na fatura', brl(pv.total))}${linha('…parcelas e fixas do ciclo', brl(pv.certo))}${linha('…compras à vista até hoje', brl(pv.avulsas))}${linha('Dias até fechar (com hoje)', pv.restantes)}${c.teto ? linha('Meta da fatura', brl(c.teto)) + linha('Dá para gastar por dia', brl(Math.max(0, folga) / pv.restantes), folga <= 0 ? 'neg' : '') : ''}</div>
+      <p class="sub mini">${base}${c.teto ? '' : ` <button class="link" data-acao="editar-cartao" data-id="${esc(c.id)}">Definir uma meta por fatura</button>.`}</p></div>`;
+    return h;
+  });
+  return { alertas, html: `<div class="grid kpis">${cards.join('')}</div>` };
+}
 function vPainel() {
   if (!S.receitas.length && !S.fixas.length && !S.lancamentos.length && !S.cartoes.length) return vBoasVindas();
   const R = resumoMes(MES);
@@ -356,6 +446,8 @@ function vPainel() {
   if (!S.fixas.length) falta.push(['contas fixas', 'nova-fixa']);
   let h = '';
   h += avisoConvite();
+  const lim = rel === 0 && S.cartoes.length ? secaoLimite() : null;
+  if (lim) h += lim.alertas.map(a => `<div class="aviso alerta" role="alert"><span>${a}</span></div>`).join('');
   if (falta.length) h += `<div class="aviso"><span>Para o painel ficar completo, falta cadastrar: ${falta.map(([t, a]) => `<button class="link" data-acao="${a}">${t}</button>`).join(', ')}.</span></div>`;
 
   const segs = [];
@@ -389,6 +481,8 @@ function vPainel() {
     ${kpiVale('VR · refeição', R.vr)}${kpiVale('VA · alimentação', R.va)}
   </div>`;
 
+  if (lim) h += lim.html;
+
   const fats = [...R.faturas.values()].sort((a, b) => (a.cartao?.vencimento || 99) - (b.cartao?.vencimento || 99));
   if (fats.length || S.cartoes.length) {
     h += `<section class="card"><h3>Faturas que vencem em ${esc(mesSo(MES))}<span class="muted">${brl(R.fixasCartaoTotal + R.lancCartaoTotal)}</span></h3>
@@ -399,6 +493,7 @@ function vPainel() {
           <span class="l-desc"><b>${esc(nomeCartao(ft.id))}${c ? ` <span class="muted">· ${esc(pessoaNome(c.pessoaId))}</span>` : ''}</b><small>${c ? `vence ${pad(Math.min(c.vencimento, diasNoMes(MES)))}/${MES.slice(5)} · ` : ''}${ft.itens} ${ft.itens === 1 ? 'item' : 'itens'}${ft.parcelas ? ` · parcelas ${brl(ft.parcelas)}` : ''}</small></span>
           <span class="l-valor">${brl(ft.total)}${c && c.limite ? `<small>limite ${brlC(c.limite)}</small>` : ''}</span></button>`;
       }).join('') : '<p class="sub">Nenhuma fatura vence neste mês.</p>'}</div>
+      ${fats.filter(ft => ft.total).map(ft => `<p class="sub" style="margin-top:10px">Parte de cada um${fats.length > 1 ? ' · ' + esc(nomeCartao(ft.id)) : ''}: ${partes(ft.porPessoa).map(([n, v]) => `${esc(n)} <b>${brl(v)}</b>`).join(' · ')}${ft.porPessoa.casal ? ` <span class="muted">(inclui ${brl(ft.porPessoa.casal)} do casal, dividido ao meio)</span>` : ''}</p>`).join('')}
       ${S.cartoes.length && rel === 0 ? `<p class="sub" style="margin-top:10px">Comprando hoje: ${S.cartoes.map(c => `${esc(c.nome)} → fatura de ${esc(mesSo(mesFaturaDe(hojeISO(), c)))}`).join(' · ')}</p>` : ''}
     </section>`;
   }
@@ -440,7 +535,7 @@ function vLancamentos() {
   return `<section class="card">
     <div class="ferr">
       <input type="search" data-filtro="q" placeholder="Buscar descrição" value="${esc(FILTRO.q)}" aria-label="Buscar">
-      <select data-filtro="pessoa" aria-label="Pessoa">${op([['', 'Todas as pessoas'], ...S.pessoas.map(p => [p.id, p.nome])], FILTRO.pessoa)}</select>
+      <select data-filtro="pessoa" aria-label="Pessoa">${op([['', 'Todas as pessoas'], ...S.pessoas.map(p => [p.id, p.nome]), ['casal', 'Casal']], FILTRO.pessoa)}</select>
       <select data-filtro="meio" aria-label="Meio de pagamento">${op(meios, FILTRO.meio)}</select>
       <select data-filtro="cat" aria-label="Categoria">${op([['', 'Todas as categorias'], ...catOps()], FILTRO.cat)}</select>
       <button class="btn primario" data-acao="novo-lanc">+ Lançamento</button>
@@ -600,7 +695,7 @@ function campoHTML(c) {
 }
 function abrirForm(cfg) {
   const dlg = $('#modal');
-  dlg.innerHTML = `<form class="form" novalidate><h2>${esc(cfg.titulo)}</h2>${cfg.info ? `<p class="info sub">${cfg.info}</p>` : ''}${cfg.campos.map(campoHTML).join('')}<p class="erro" role="alert" hidden></p><div class="acoes-form">${cfg.aoExcluir ? '<button type="button" class="btn perigo" data-f="excluir">Excluir</button>' : ''}<span class="sp"></span><button type="button" class="btn" data-f="cancelar">Cancelar</button><button type="submit" class="btn primario">Salvar</button></div></form>`;
+  dlg.innerHTML = `<form class="form" novalidate><h2>${esc(cfg.titulo)}</h2>${cfg.info ? `<p class="info sub">${cfg.info}</p>` : ''}${cfg.campos.map(campoHTML).join('')}<p class="erro" role="alert" hidden></p><div class="acoes-form">${cfg.aoExcluir ? '<button type="button" class="btn perigo" data-f="excluir">Excluir</button>' : ''}<span class="sp"></span><button type="button" class="btn" data-f="cancelar">Cancelar</button><button type="submit" class="btn primario">Salvar</button>${cfg.aoOutro ? '<button type="submit" class="btn" data-f="outro" style="order:-1">Salvar e lançar outro</button>' : ''}</div></form>`;
   const form = dlg.querySelector('form'), erro = form.querySelector('.erro');
   const ler = () => { const o = {}; for (const c of cfg.campos) { const el = form.elements[c.nome]; if (el) o[c.nome] = c.tipo === 'checkbox' ? el.checked : el.value; } return o; };
   const atualizar = ev => {
@@ -615,6 +710,7 @@ function abrirForm(cfg) {
     const v = ler(), msg = cfg.validar && cfg.validar(v);
     if (msg) { erro.textContent = msg; erro.hidden = false; return; }
     cfg.aoSalvar(v); salvar(); dlg.close(); render();
+    if (cfg.aoOutro && e.submitter && e.submitter.dataset.f === 'outro') cfg.aoOutro(v);
   });
   form.querySelector('[data-f="cancelar"]').onclick = () => dlg.close();
   const bx = form.querySelector('[data-f="excluir"]');
@@ -644,7 +740,7 @@ function formLancamento(l, preset) {
       { nome: 'data', label: 'Data da compra', tipo: 'date', valor: b.data },
       { nome: 'meio', label: 'Pago com', tipo: 'select', opcoes: opcoesMeioLanc(), valor: meioVal, dica: true },
       { nome: 'parcelas', label: 'Parcelas', tipo: 'number', min: 1, max: 48, valor: b.parcelas || 1, dica: true, mostrarSe: v => v.meio.startsWith('cartao') },
-      { nome: 'pessoaId', label: 'Quem comprou', tipo: 'select', opcoes: S.pessoas.map(p => [p.id, p.nome]), valor: b.pessoaId },
+      { nome: 'pessoaId', label: 'De quem é o gasto', tipo: 'select', opcoes: [...S.pessoas.map(p => [p.id, p.nome]), ['casal', 'Casal (dividido)']], valor: b.pessoaId },
       { nome: 'categoria', label: 'Categoria', tipo: 'select', opcoes: catOps(), valor: b.categoria || categoriaAuto(b.descricao, b.meio) },
       { nome: 'lembrar', label: 'Sempre usar esta categoria', tipo: 'checkbox', valor: true, mostrarSe: v => catTocada && !!termoDe(v.descricao) && v.categoria !== categorizar(v.descricao) },
       { nome: 'obs', label: 'Observação (opcional)', tipo: 'text', valor: b.obs || '', largo: true },
@@ -680,6 +776,8 @@ function formLancamento(l, preset) {
     },
     aoExcluir: l ? () => { S.lancamentos = S.lancamentos.filter(x => x.id !== l.id); } : null,
     confirmaExcluir: l && (l.parcelas || 1) > 1 ? 'Excluir a compra inteira, com todas as parcelas?' : 'Excluir este lançamento?',
+    // lançar vários de uma vez: reabre o formulário mantendo data, meio de pagamento e pessoa
+    aoOutro: novo ? v => { const [meio, cid] = v.meio.startsWith('cartao:') ? ['cartao', v.meio.slice(7)] : [v.meio, '']; formLancamento(null, { data: v.data, meio, cartaoId: cid, pessoaId: v.pessoaId }); } : null,
   });
 }
 function formReceita(r) {
@@ -719,17 +817,19 @@ function formCartao(c) {
       { nome: 'final', label: 'Últimos 4 dígitos (opcional)', tipo: 'text', valor: b.final, placeholder: '0000', inputmode: 'numeric', maxlength: 4 },
       { nome: 'fechamento', label: 'Dia do fechamento', tipo: 'number', min: 1, max: 31, valor: b.fechamento },
       { nome: 'vencimento', label: 'Dia do vencimento', tipo: 'number', min: 1, max: 31, valor: b.vencimento, dica: true },
-      { nome: 'limite', label: 'Limite (opcional)', tipo: 'dinheiro', valor: b.limite || '' },
+      { nome: 'limite', label: 'Limite do cartão', tipo: 'dinheiro', valor: b.limite || '' },
+      { nome: 'teto', label: 'Meta por fatura (opcional)', tipo: 'dinheiro', valor: b.teto || '', dica: true },
     ],
     aoMudar: (v, form) => {
       const f = +v.fechamento, ve = +v.vencimento;
       form.querySelector('[data-dica="vencimento"]').textContent = f >= 1 && f <= 31 && ve >= 1 && ve <= 31 ? `Uma compra feita hoje cai na fatura de ${mesSo(mesFaturaDe(hojeISO(), { fechamento: f, vencimento: ve }))}.` : '';
+      form.querySelector('[data-dica="teto"]').textContent = 'Quanto vocês querem gastar no máximo por fatura. O painel avisa quando a previsão passar disso.';
     },
     validar: v => !v.nome.trim() ? 'Dê um nome ao cartão.' : !(+v.fechamento >= 1 && +v.fechamento <= 31) ? 'Informe o dia do fechamento (1 a 31).' : !(+v.vencimento >= 1 && +v.vencimento <= 31) ? 'Informe o dia do vencimento (1 a 31).' : (v.final && !/^\d{4}$/.test(v.final.trim())) ? 'Os últimos dígitos são 4 números.' : null,
     aoSalvar: v => {
       const o = c || { id: uid() };
-      const lim = parseValor(v.limite);
-      Object.assign(o, { nome: v.nome.trim(), pessoaId: v.pessoaId, final: v.final.trim(), fechamento: +v.fechamento, vencimento: +v.vencimento, limite: lim > 0 ? round2(lim) : 0 });
+      const lim = parseValor(v.limite), teto = parseValor(v.teto);
+      Object.assign(o, { nome: v.nome.trim(), pessoaId: v.pessoaId, final: v.final.trim(), fechamento: +v.fechamento, vencimento: +v.vencimento, limite: lim > 0 ? round2(lim) : 0, teto: teto > 0 ? round2(teto) : 0 });
       if (!c) S.cartoes.push(o);
       for (const l of S.lancamentos) if (l.meio === 'cartao' && l.cartaoId === o.id && l.mesRefAuto) l.mesRef = calcMesRef(l);
       toast('Cartão salvo');

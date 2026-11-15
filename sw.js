@@ -2,7 +2,7 @@
 // Só guarda arquivos do próprio site (rede primeiro, para pegar sempre a versão nova;
 // a cópia guardada só é usada sem internet). Nada de outros sites é carregado.
 // Dados e login (Supabase) passam direto pela rede — nunca ficam guardados aqui.
-const VERSAO = 'financas-casa-v3';
+const VERSAO = 'financas-casa-v4';
 const BASE = ['./', './index.html', './app.js', './config.js', './manifest.webmanifest', './libs/supabase.js',
   './icones/icone-180.png', './icones/icone-192.png', './icones/icone-512.png'];
 
